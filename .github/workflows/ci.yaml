@@ -150,3 +150,208 @@ jobs:
         if: always()
         working-directory: docker-compose
         run: docker compose logs
+
+  # scan-local.ps1 on Windows, under what a Windows laptop may impose on an unsigned script,
+  # as an administrator and as a standard user. GitHub's Windows runners can't run Deckard's
+  # Linux containers, so smoke-windows reads this job's scan.
+  scan-windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: powershell
+    env:
+      OSQUERY_VERSION: 5.24.0
+      OSQUERY_MSI_SHA256: 5f123c07936ee927d7b44ccdaf5d01c4b9bab2956328a4d8c7adc3395812a659
+      SCAN: docker-compose\scan-local.ps1
+      FOLDER: docker-compose\local-scan
+    steps:
+      - uses: actions/checkout@v4
+      - name: The checkout has LF line endings, which elastic/setup.sh needs in its container
+        # The runner's git converts to CRLF by default, as Git for Windows does.
+        run: |
+          if ((Get-Content -Raw docker-compose\elastic\setup.sh) -match "`r") {
+            throw 'setup.sh was checked out with CRLF line endings'
+          }
+      - name: Install osquery
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'osquery.msi'
+          curl.exe -fsSL -o $msi "https://github.com/osquery/osquery/releases/download/$env:OSQUERY_VERSION/osquery-$env:OSQUERY_VERSION.msi"
+          if ($LASTEXITCODE -ne 0) { throw 'could not download osquery' }
+          if ((Get-FileHash $msi -Algorithm SHA256).Hash -ne $env:OSQUERY_MSI_SHA256) {
+            throw 'osquery.msi does not match its pinned hash'
+          }
+          $install = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "msiexec exited $($install.ExitCode)" }
+      - name: Install an agent for the scan to find
+        # Claude Code's config directory, one of the things the catalog knows it by.
+        run: New-Item -ItemType Directory -Force (Join-Path $env:USERPROFILE '.claude') | Out-Null
+      - name: Scan this machine, as an administrator
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File $env:SCAN
+          if ($LASTEXITCODE -ne 0) { throw "scan-local.ps1 exited $LASTEXITCODE" }
+          $rows = Get-Content -Raw (Join-Path $env:FOLDER 'inventory.json') | ConvertFrom-Json
+          if (-not ($rows | Where-Object { $_.kind -eq 'file' -and $_.id -like '*\.claude*' })) {
+            throw 'the scan has no row for ~\.claude'
+          }
+          $machine = Get-Content -Raw (Join-Path $env:FOLDER 'machine.json') | ConvertFrom-Json
+          if ($machine.platform -ne 'windows' -or -not $machine.device_id) {
+            throw "machine.json does not name this Windows machine: $machine"
+          }
+          $rows | Group-Object kind | ForEach-Object { "$($_.Name)=$($_.Count)" }
+      - name: Scan under a Restricted execution policy, Windows 11's default
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Set-ExecutionPolicy Restricted -Scope LocalMachine -Force -ErrorAction SilentlyContinue
+          try {
+            $policy = powershell -NoProfile -Command Get-ExecutionPolicy
+            if ($policy -ne 'Restricted') { throw "the effective policy is $policy, not Restricted" }
+            powershell -NoProfile -File $env:SCAN
+            if ($LASTEXITCODE -eq 0) { throw 'Restricted ran a script without -ExecutionPolicy Bypass' }
+            powershell -NoProfile -ExecutionPolicy Bypass -File $env:SCAN
+            if ($LASTEXITCODE -ne 0) { throw "scan-local.ps1 exited $LASTEXITCODE under Restricted" }
+          } finally {
+            Set-ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction SilentlyContinue
+          }
+          exit 0
+      - name: Scan in ConstrainedLanguage mode, which AppLocker and WDAC impose on unsigned scripts
+        run: |
+          $ErrorActionPreference = 'Continue'
+          # A test-only switch PowerShell reads at startup, for the mode those policies set.
+          [Environment]::SetEnvironmentVariable('__PSLockdownPolicy', '4', 'Machine')
+          $env:__PSLockdownPolicy = '4'
+          try {
+            $mode = powershell -NoProfile -Command '$ExecutionContext.SessionState.LanguageMode'
+            if ($mode -ne 'ConstrainedLanguage') { throw "PowerShell started in $mode" }
+            powershell -NoProfile -ExecutionPolicy Bypass -File $env:SCAN
+            if ($LASTEXITCODE -ne 0) { throw "scan-local.ps1 exited $LASTEXITCODE in ConstrainedLanguage" }
+          } finally {
+            [Environment]::SetEnvironmentVariable('__PSLockdownPolicy', $null, 'Machine')
+            Remove-Item Env:\__PSLockdownPolicy -ErrorAction SilentlyContinue
+          }
+          exit 0
+      - name: An AllSigned policy set by Group Policy refuses it, as the README says
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name EnableScripts -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $key -Name ExecutionPolicy -Value AllSigned -PropertyType String -Force | Out-Null
+          try {
+            $out = powershell -NoProfile -ExecutionPolicy Bypass -File $env:SCAN 2>&1 | Out-String
+            $code = $LASTEXITCODE
+          } finally {
+            Remove-Item -Path $key -Recurse -Force
+          }
+          if ($code -eq 0) { throw 'scan-local.ps1 ran unsigned under an AllSigned Group Policy' }
+          if ($out -notmatch 'not digitally signed') { throw "refused for another reason: $out" }
+          exit 0
+      - name: A query that doesn't match its pin is refused, and the last scan kept
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $inventory = Join-Path $env:FOLDER 'inventory.json'
+          $before = (Get-FileHash $inventory).Hash
+          $tampered = Join-Path $env:RUNNER_TEMP 'tampered.ps1'
+          $pin = '$$DiscoveryWindowsSqlSha256 = ''' + ('0' * 64) + ''''
+          (Get-Content $env:SCAN) -replace '^\$DiscoveryWindowsSqlSha256 = .*$', $pin | Set-Content $tampered
+          powershell -NoProfile -ExecutionPolicy Bypass -File $tampered $env:FOLDER
+          if ($LASTEXITCODE -eq 0) { throw 'ran a query that does not match its pin' }
+          if ((Get-FileHash $inventory).Hash -ne $before) { throw 'a refused run replaced the last scan' }
+          exit 0
+      - name: A scan osquery can't run fails, and the last scan is kept
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $inventory = Join-Path $env:FOLDER 'inventory.json'
+          $before = (Get-FileHash $inventory).Hash
+          $fake = Join-Path $env:RUNNER_TEMP 'osqueryi.cmd'
+          Set-Content $fake -Encoding ASCII -Value @(
+            '@echo off',
+            'if "%1"=="--version" (echo osqueryi version 5.24.0& exit /b 0)',
+            'echo no such table: programs 1>&2',
+            'exit /b 1'
+          )
+          $env:OSQI = $fake
+          powershell -NoProfile -ExecutionPolicy Bypass -File $env:SCAN
+          $code = $LASTEXITCODE
+          Remove-Item Env:\OSQI
+          if ($code -eq 0) { throw 'a failed osquery run reported success' }
+          if ((Get-FileHash $inventory).Hash -ne $before) { throw 'a failed run replaced the last scan' }
+          if (Get-ChildItem -Force $env:FOLDER -Filter '.scan-*') { throw 'a failed run left its staging folder' }
+          exit 0
+      - name: Scan as a standard user
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $password = ConvertTo-SecureString ('Deckard-' + [guid]::NewGuid().ToString('N') + '!') -AsPlainText -Force
+          New-LocalUser -Name deckard-user -Password $password -PasswordNeverExpires | Out-Null
+          $credential = New-Object System.Management.Automation.PSCredential('deckard-user', $password)
+          # Their own copy, in a folder they own, as their clone would be.
+          $dir = 'C:\deckard-user'
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          Copy-Item $env:SCAN $dir
+          icacls $dir /grant 'deckard-user:(OI)(CI)F' | Out-Null
+          # Signing them in once makes their profile; then an agent in it to find.
+          Start-Process cmd.exe -ArgumentList '/c exit 0' -Credential $credential -LoadUserProfile `
+            -WorkingDirectory 'C:\' -Wait
+          New-Item -ItemType Directory -Force 'C:\Users\deckard-user\.claude' | Out-Null
+          $run = Start-Process cmd.exe -Credential $credential -LoadUserProfile -WorkingDirectory $dir `
+            -Wait -PassThru -ArgumentList `
+            "/c powershell -NoProfile -ExecutionPolicy Bypass -File $dir\scan-local.ps1 > $dir\out.txt 2>&1"
+          Get-Content "$dir\out.txt"
+          if ($run.ExitCode -ne 0) { throw "scan-local.ps1 exited $($run.ExitCode) as a standard user" }
+          $rows = Get-Content -Raw "$dir\local-scan\inventory.json" | ConvertFrom-Json
+          if (-not ($rows | Where-Object { $_.kind -eq 'file' -and $_.id -like '*\deckard-user\.claude*' })) {
+            throw "the standard user's scan has no row for their ~\.claude"
+          }
+          # What an administrator's scan finds that a standard user's doesn't, by kind.
+          $admin = Get-Content -Raw (Join-Path $env:FOLDER 'inventory.json') | ConvertFrom-Json
+          Write-Host "standard user: $(($rows | Group-Object kind | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' ')"
+          Write-Host "administrator: $(($admin | Group-Object kind | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' ')"
+          exit 0
+      - name: Upload the scan, for smoke-windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-local-scan
+          path: docker-compose/local-scan/
+
+  # The Windows quickstart's second half: Deckard reads scan-windows' scan of a Windows
+  # machine, and its agent reaches Elasticsearch as a Windows one.
+  smoke-windows:
+    needs: scan-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pins
+        run: scripts/versions.sh >> "$GITHUB_ENV"
+      - name: Stage the engine image as this version of Deckard
+        run: |
+          docker pull "arthurplatform/ml-engine@$ENGINE_DIGEST"
+          docker tag "arthurplatform/ml-engine@$ENGINE_DIGEST" "arthurplatform/deckard:$DECKARD_VERSION"
+      - name: Take the Windows scan
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-local-scan
+          path: docker-compose/local-scan
+      - name: Start Deckard
+        working-directory: docker-compose
+        run: docker compose up -d --wait
+      - name: Wait for the scan to reach Elasticsearch
+        run: |
+          found() {
+            jq -n --arg q "$1" '{query: {query_string: {query: $q}}}' \
+              | curl -fsS -u elastic:changeme -H 'Content-Type: application/json' -d @- \
+                  'http://127.0.0.1:9200/logs-arthur.discovery-*/_count' \
+              | jq -e '.count > 0' >/dev/null
+          }
+          scan='event_type:"arthur.discovery.scan_outcome" AND source.name:"this-machine" AND source.config_name:"inventory"'
+          for _ in $(seq 60); do
+            found "$scan" && break
+            sleep 5
+          done
+          found "$scan AND outcome.succeeded:true" || { echo "::error::no successful scan"; exit 1; }
+          found 'event_type:"arthur.discovery.agent" AND agent.name:"Claude Code" AND agent.platform:"windows"' \
+            || { echo "::error::the scan did not report Claude Code on Windows"; exit 1; }
+      - name: Logs
+        if: always()
+        working-directory: docker-compose
+        run: docker compose logs

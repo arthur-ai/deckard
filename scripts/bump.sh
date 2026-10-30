@@ -15,6 +15,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 chart="$root/charts/deckard/Chart.yaml"
 compose="$root/docker-compose/docker-compose.yaml"
 scan="$root/docker-compose/scan-local.sh"
+scan_windows="$root/docker-compose/scan-local.ps1"
 
 fail() { echo "bump: $*" >&2; exit 1; }
 usage() { sed -n '4,6s/^#  *//p' "$0" >&2; exit 2; }
@@ -60,15 +61,19 @@ if [ -n "$engine" ]; then
   digest="$(docker buildx imagetools inspect "arthurplatform/ml-engine:$engine" --format '{{json .Manifest}}' \
     | jq -r .digest)"
   commit="$(gh api "repos/arthur-ai/arthur-engine/commits/$engine" --jq .sha)"
-  dist="https://raw.githubusercontent.com/arthur-ai/arthur-engine/$commit/integrations/endpoint-ai-discovery/dist"
-  mac_sha256="$(curl -fsSL "$dist/collect.sh" | sha256)"
-  linux_sha256="$(curl -fsSL "$dist/collect-linux.sh" | sha256)"
+  tree="https://raw.githubusercontent.com/arthur-ai/arthur-engine/$commit/integrations/endpoint-ai-discovery"
+  mac_sha256="$(curl -fsSL "$tree/dist/collect.sh" | sha256)"
+  linux_sha256="$(curl -fsSL "$tree/dist/collect-linux.sh" | sha256)"
+  # Windows has no collector; scan-local.ps1 runs the vendored query itself.
+  windows_sha256="$(curl -fsSL "$tree/vendor/ai-detection-spec/dist/discovery-windows.sql" | sha256)"
 
   set_after '  arthur.ai/engine-version: ' "\"$engine\"" "$chart"
   set_after '  arthur.ai/engine-digest: ' "$digest" "$chart"
   set_after 'COLLECTOR_REF=' "$commit" "$scan"
   set_after 'COLLECT_SH_SHA256=' "$mac_sha256" "$scan"
   set_after 'COLLECT_LINUX_SH_SHA256=' "$linux_sha256" "$scan"
+  set_after '$CollectorRef = ' "'$commit'" "$scan_windows"
+  set_after '$DiscoveryWindowsSqlSha256 = ' "'$windows_sha256'" "$scan_windows"
 fi
 
 set_after 'version: ' "$deckard" "$chart"

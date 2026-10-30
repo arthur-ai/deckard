@@ -26,7 +26,7 @@ services:
       - ./discovery.yaml:/etc/deckard/discovery.yaml:ro
       # Files the config reads with {file: secrets/...}, resolved beside the config.
       - ./secrets:/etc/deckard/secrets:ro
-      # This machine's scan, written by ./scan-local.sh, for the `local` source.
+      # This machine's scan, written by ./scan-local.sh (scan-local.ps1 on Windows), for the `local` source.
       - ./local-scan:/etc/deckard/local-scan:ro
     depends_on:
       # So the scan at startup has a user to send as.

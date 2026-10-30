@@ -5,10 +5,13 @@
 docker compose up -d --wait
 ```
 
+On Windows, scan with `powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1`
+instead ([On Windows](#on-windows)).
+
 Then open [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in
 Kibana and log in as `elastic`, password `changeme`. You need Docker Compose 2.24 or later.
 
-Or have a coding agent do it, checks and all: paste it this line.
+Or, on macOS or Linux, have a coding agent do it, checks and all: paste it this line.
 
 ```text
 Download https://raw.githubusercontent.com/arthur-ai/deckard/main/docs/agent-setup/prompt.md with curl, read all of it, and follow its instructions to set up Arthur Deckard on this machine.
@@ -62,7 +65,7 @@ mounts into Deckard:
 | File | Holds |
 |---|---|
 | `inventory.json` | what the collector found |
-| `machine.json` | which machine it was: its hardware UUID on macOS, or `/etc/machine-id` on Linux, plus its hostname and OS version |
+| `machine.json` | which machine it was: its hardware UUID on macOS, `/etc/machine-id` on Linux, or `MachineGuid` on Windows, plus its hostname and OS version |
 
 - It needs [osquery](https://osquery.io/downloads) and runs on macOS and Linux.
 - It doesn't need root. Run as you, it sees what you can read, which on a laptop is where
@@ -72,6 +75,36 @@ mounts into Deckard:
 - Deckard re-reads `local-scan/` every interval (1 hour in the shipped config), but the
   folder only changes when you run `./scan-local.sh` again. To publish a new scan now,
   `docker compose restart deckard`. A scan more than 7 days old is not published.
+
+### On Windows
+
+`scan-local.ps1` does the same from PowerShell. Arthur's collector doesn't run on Windows,
+so it runs [ai-detection-spec](https://github.com/arthur-ai/ai-detection-spec)'s Windows
+query through osquery itself, pinned and checked the same way, and writes the same two
+files:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
+```
+
+- It needs [osquery](https://osquery.io/downloads) 5.17.0 or later: the Windows installer
+  (`.msi`). The installer also starts osquery's own background service, `osqueryd`, which
+  Deckard doesn't use; `Stop-Service osqueryd; Set-Service osqueryd -StartupType Disabled`
+  from an administrator PowerShell turns it off.
+- It doesn't need an administrator. Run as you, it sees what you can read. Windows lists
+  the apps a user installed for themselves only while that user is signed in, so it finds
+  yours, not those of other people on the machine who are signed out.
+- `-ExecutionPolicy Bypass` lets Windows run this one script file this once, since by
+  default it runs none. Nothing is changed for other scripts.
+- If you downloaded the repository as a ZIP rather than cloning it, Windows marks the file
+  as downloaded; run `Unblock-File .\scan-local.ps1` first.
+- A machine whose IT allows signed scripts only (an `AllSigned` execution policy set by
+  Group Policy) won't run it, and `-ExecutionPolicy Bypass` can't override that. Where
+  AppLocker or Windows Defender Application Control restricts unsigned scripts to
+  PowerShell's ConstrainedLanguage mode, it runs unchanged: it uses only what that mode
+  allows.
+- As with `scan-local.sh`, Deckard picks up a new scan at its next interval, or now with
+  `docker compose restart deckard`.
 
 ## Adding sources
 
@@ -105,9 +138,9 @@ with Deckard's `depends_on`.
 
 ## Troubleshooting
 
-Start with `./preflight.sh`. It only reads, and checks what the quickstart needs: Docker
-running and usable by you, its memory and disk, Compose 2.24 or later, free ports, osquery
-and the machine ID, printing the command to fix each one that fails.
+Start with `./preflight.sh` (macOS and Linux). It only reads, and checks what the quickstart
+needs: Docker running and usable by you, its memory and disk, Compose 2.24 or later, free
+ports, osquery and the machine ID, printing the command to fix each one that fails.
 
 Each scan sends an outcome event, which Discover finds with `outcome.succeeded : false`
 when one fails, saying why in `outcome.error`. Deckard logs the same outcome:
@@ -115,13 +148,14 @@ when one fails, saying why in `outcome.error`. Deckard logs the same outcome:
 
 | The outcome says | Do this |
 |---|---|
-| `… machine.json does not exist` | Run `./scan-local.sh`. Deckard reads its output; it can't scan the host itself |
-| a scan too old to publish | Run `./scan-local.sh` again |
+| `… machine.json does not exist` | Run `./scan-local.sh` (`scan-local.ps1` on Windows). Deckard reads its output; it can't scan the host itself |
+| a scan too old to publish | Run `./scan-local.sh` (`scan-local.ps1` on Windows) again |
 | nothing in Discover at all | Open the [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) view, which covers 30 days (plain Discover may cover only the last 15 minutes). Still nothing: `docker compose logs deckard`. A config Deckard can't use stops it at startup, naming the problem, and a destination that refuses events is logged there too |
 | `docker compose up` fails at `elastic-setup` | `docker compose logs elastic-setup` says why |
 
 `scan-local.sh` says so if osquery is missing, and prints the collector's own output if the
-scan fails.
+scan fails. `scan-local.ps1` does the same with osquery's output, and also says if osquery
+is older than the Windows query needs.
 
 ## Notes
 
