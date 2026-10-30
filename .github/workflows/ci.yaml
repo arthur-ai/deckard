@@ -302,10 +302,26 @@ jobs:
           if (-not ($rows | Where-Object { $_.kind -eq 'file' -and $_.id -like '*\deckard-user\.claude*' })) {
             throw "the standard user's scan has no row for their ~\.claude"
           }
-          # What an administrator's scan finds that a standard user's doesn't, by kind.
-          $admin = Get-Content -Raw (Join-Path $env:FOLDER 'inventory.json') | ConvertFrom-Json
-          Write-Host "standard user: $(($rows | Group-Object kind | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' ')"
-          Write-Host "administrator: $(($admin | Group-Object kind | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' ')"
+          # Then an administrator's scan of the machine as it now is, and what each saw that
+          # the other didn't. An administrator also sees other people's homes; the README's
+          # promise is only that a standard user's scan misses nothing of their own.
+          $adminDir = Join-Path $env:RUNNER_TEMP 'admin-scan'
+          powershell -NoProfile -ExecutionPolicy Bypass -File $env:SCAN $adminDir
+          if ($LASTEXITCODE -ne 0) { throw "scan-local.ps1 exited $LASTEXITCODE as an administrator" }
+          $admin = Get-Content -Raw (Join-Path $adminDir 'inventory.json') | ConvertFrom-Json
+          $userKeys = @($rows | ForEach-Object { "$($_.kind) | $($_.id) | $($_.loc)" })
+          $adminKeys = @($admin | ForEach-Object { "$($_.kind) | $($_.id) | $($_.loc)" })
+          $onlyAdmin = @($adminKeys | Where-Object { $_ -notin $userKeys } | Sort-Object -Unique)
+          $onlyUser = @($userKeys | Where-Object { $_ -notin $adminKeys } | Sort-Object -Unique)
+          Write-Host "Only in the administrator's scan ($($onlyAdmin.Count)):"
+          $onlyAdmin | ForEach-Object { Write-Host "  $_" }
+          Write-Host "Only in the standard user's scan ($($onlyUser.Count)):"
+          $onlyUser | ForEach-Object { Write-Host "  $_" }
+          $sid = (Get-LocalUser deckard-user).SID.Value
+          $missed = @($onlyAdmin | Where-Object { $_ -like '*\Users\deckard-user\*' -or $_ -like "*$sid*" })
+          if ($missed.Count) {
+            throw "the standard user's scan misses what an administrator's finds of theirs: $($missed -join '; ')"
+          }
           exit 0
       - name: Upload the scan, for smoke-windows
         uses: actions/upload-artifact@v4
