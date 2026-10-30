@@ -164,8 +164,9 @@ if (-not ($rows -is [array]) -or $rows.Count -eq 0) {
     Fail "osquery's output is not a list of rows; the folder still holds the previous scan, if any"
 }
 
-# Set-Content writes UTF-8 with a byte order mark, which Deckard reads.
-[pscustomobject]@{
+# A hashtable, not [pscustomobject]: ConstrainedLanguage refuses that conversion. Set-Content
+# writes UTF-8 with a byte order mark, which Deckard reads.
+[ordered]@{
     device_id  = $deviceId
     hostname   = $env:COMPUTERNAME
     platform   = 'windows'
