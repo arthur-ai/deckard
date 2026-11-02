@@ -14,15 +14,14 @@ Every field and permission is in the
 | 3 | AWS Bedrock and AgentCore | `aws_bedrock` | Bedrock agents, AgentCore runtimes, and the IAM roles CloudTrail shows calling Bedrock models |
 | 4 | AWS ECS and EKS | `aws_containers` | Workloads that run an agent's image or run as a role calling Bedrock models |
 | 5 | Vercel | `vercel_ai` | A team's projects that call an LLM or run an agent |
-| 6 | Wiz | `wiz` | AI agents and services, and AI frameworks on workloads, in one Wiz tenant's inventory |
-| 7 | Jamf Pro (managed Macs) | `jamf_pro` | The endpoint collector's inventory on each Mac |
-| 8 | Google Compute Engine VMs | `gcp_compute_engine` | The endpoint collector's inventory on each VM |
-| 9 | AWS EC2 instances | `aws_ec2` | The endpoint collector's inventory on each instance, through SSM |
-| 10 | AWS network logs (CloudWatch Logs) | `aws_network` | Route 53 Resolver query logs or VPC flow logs: hosts calling LLM APIs |
-| 11 | Google Cloud network logs | `gcp_network` | Cloud DNS query logs and VPC flow logs: workloads calling LLM APIs |
-| 12 | Splunk Enterprise | `splunk_enterprise` | The results of the user's SPL search |
-| 13 | Elastic Security | `elastic_security` | The results of the user's ES\|QL query |
-| 14 | None for now: keep only this machine | | |
+| 6 | Jamf Pro (managed Macs) | `jamf_pro` | The endpoint collector's inventory on each Mac |
+| 7 | Google Compute Engine VMs | `gcp_compute_engine` | The endpoint collector's inventory on each VM |
+| 8 | AWS EC2 instances | `aws_ec2` | The endpoint collector's inventory on each instance, through SSM |
+| 9 | AWS network logs (CloudWatch Logs) | `aws_network` | Route 53 Resolver query logs or VPC flow logs: hosts calling LLM APIs |
+| 10 | Google Cloud network logs | `gcp_network` | Cloud DNS query logs and VPC flow logs: workloads calling LLM APIs |
+| 11 | Splunk Enterprise | `splunk_enterprise` | The results of the user's SPL search |
+| 12 | Elastic Security | `elastic_security` | The results of the user's ES\|QL query |
+| 13 | None for now: keep only this machine | | |
 
 Every source's `configs` uses `query: ""` and `query_language: none` unless its card says
 otherwise.
@@ -121,24 +120,7 @@ otherwise.
       - {name: projects, query: "", query_language: none, lookback_window_seconds: 86400}
 ```
 
-### 6. `wiz`
-- **Prerequisites:** a Wiz tenant; permission to create a service account.
-- **Ask:** the GraphQL endpoint (User Settings > Tenant, `https://api.<dc>.app.wiz.io/graphql`);
-  for gov or FedRAMP tenants, `auth_environment` (`gov` or `fedramp`).
-- **Secrets:** `WIZ_CLIENT_ID`, `WIZ_CLIENT_SECRET`: a Wiz service account with
-  `read:resources` and `read:inventory`.
-```yaml
-  - name: wiz
-    vendor: wiz
-    fields:
-      - {key: api_endpoint_url, value: "https://api.<dc>.app.wiz.io/graphql"}
-      - {key: client_id, value: "${WIZ_CLIENT_ID}"}
-      - {key: client_secret, value: "${WIZ_CLIENT_SECRET}"}
-    configs:
-      - {name: ai-inventory, query: "", query_language: none, lookback_window_seconds: 86400}
-```
-
-### 7. `jamf_pro`
+### 6. `jamf_pro`
 - **Prerequisites:** Arthur's endpoint collector deployed to the Macs through Jamf:
   https://github.com/arthur-ai/arthur-engine/blob/main/integrations/endpoint-ai-discovery/docs/mdm/jamf-pro.md
 - **Ask:** the Jamf Pro URL (`https://<name>.jamfcloud.com`); optionally computer group
@@ -158,7 +140,7 @@ otherwise.
       - {name: all-macs, query: "", query_language: none, lookback_window_seconds: 21600}
 ```
 
-### 8. `gcp_compute_engine`
+### 7. `gcp_compute_engine`
 - **Prerequisites:** the collector deployed to the VMs through an OS policy:
   https://github.com/arthur-ai/arthur-engine/blob/main/integrations/endpoint-ai-discovery/docs/mdm/gce.md
 - **Ask:** exactly one of: project IDs, an organization number, or folder numbers.
@@ -176,7 +158,7 @@ otherwise.
       - {name: vms, query: "", query_language: none, lookback_window_seconds: 86400}
 ```
 
-### 9. `aws_ec2`
+### 8. `aws_ec2`
 - **Prerequisites:** the collector deployed to the instances through SSM:
   https://github.com/arthur-ai/arthur-engine/blob/main/integrations/endpoint-ai-discovery/docs/mdm/ec2.md
 - **Ask:** regions (comma-separated, or `all`); for several accounts, `all` or account IDs
@@ -196,7 +178,7 @@ otherwise.
       - {name: instances, query: "", query_language: none, lookback_window_seconds: 86400}
 ```
 
-### 10. `aws_network`
+### 9. `aws_network`
 - **Prerequisites:** Route 53 Resolver query logs or VPC Flow Logs in CloudWatch Logs.
 - **Ask:** the region; log group names (up to 20); the format: `route53_resolver_query_log`
   (best: it names the hosts), `vpc_flow_log_v2` (addresses only: matches only the extra
@@ -217,7 +199,7 @@ otherwise.
       - {name: dns, query: "", query_language: none, lookback_window_seconds: 3600}
 ```
 
-### 11. `gcp_network`
+### 10. `gcp_network`
 - **Prerequisites:** Cloud DNS logging (a DNS server policy per VPC network) or VPC flow
   logs turned on; neither is by default. Under Shared VPC, use the host project.
 - **Ask:** the project ID; optionally extra inference hosts.
@@ -233,7 +215,7 @@ otherwise.
       - {name: dns-and-flows, query: "", query_language: none, lookback_window_seconds: 3600}
 ```
 
-### 12. `splunk_enterprise`
+### 11. `splunk_enterprise`
 - **Prerequisites:** logs in Splunk that show agents (LLM gateway or proxy logs, say), and
   token authentication on.
 - **Ask:** the management URL (`https://<host>:8089`); whether it uses Splunk's default
@@ -264,7 +246,7 @@ otherwise.
         lookback_window_seconds: 86400
 ```
 
-### 13. `elastic_security`
+### 12. `elastic_security`
 - **Prerequisites:** the logs are in an Elasticsearch reachable over `https://`.
 - **Ask:** the Elasticsearch URL (not Kibana's); whether it has a self-signed certificate
   (then `tls_verification: ca_only` and its CA at `secrets/elastic-ca.pem`); the index.
