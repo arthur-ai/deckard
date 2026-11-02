@@ -68,8 +68,19 @@ start_docker() {
   else echo "sudo service docker start"; fi
 }
 
+# Where Docker Desktop, OrbStack and Homebrew put the docker command, in case this shell's
+# PATH (often a coding agent's) leaves it out.
+docker_off_path=""
+for c in /usr/local/bin/docker "$HOME/.docker/bin/docker" /opt/homebrew/bin/docker \
+         "$HOME/.orbstack/bin/docker" /Applications/Docker.app/Contents/Resources/bin/docker; do
+  if [ -x "$c" ]; then docker_off_path="$c"; break; fi
+done
+
 docker_ok=false
-if ! command -v docker >/dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1 && [ -n "$docker_off_path" ]; then
+  check docker FAIL "docker is installed at $docker_off_path but not on this shell's PATH"
+  fix "export PATH=\"$(dirname "$docker_off_path"):\$PATH\"   (add it to your shell's startup file to keep it), then run this again"
+elif ! command -v docker >/dev/null 2>&1; then
   check docker FAIL "Docker is not installed"
   if [ "$os" = Darwin ]; then
     fix "Install and start one of: Docker Desktop (https://docs.docker.com/desktop/setup/install/mac-install/)," \
@@ -142,6 +153,9 @@ for port in 9200 5601; do
     check "port-$port" PASS "free"
   elif [ "$docker_ok" = true ] && [ "$(docker ps --filter "publish=$port" --format '{{.Label "com.docker.compose.project"}}' | head -n 1)" = arthur-deckard ]; then
     check "port-$port" PASS "Deckard's own Compose stack is running"
+  elif [ "$docker_ok" = false ]; then
+    # Without a working docker command there's no telling whether this is Deckard's own stack.
+    check "port-$port" INFO "in use; checked again once the docker check passes"
   else
     check "port-$port" FAIL "something else listens on 127.0.0.1:$port"
     fix "See what: lsof -nP -iTCP:$port -sTCP:LISTEN (or docker ps --filter publish=$port), and stop it."
