@@ -68,8 +68,35 @@ start_docker() {
   else echo "sudo service docker start"; fi
 }
 
+# Where Docker Desktop, OrbStack, Rancher Desktop and Homebrew put the docker command, in
+# case this shell's PATH (often a coding agent's) leaves it out.
+docker_off_path=""
+for c in /usr/local/bin/docker "$HOME/.docker/bin/docker" /opt/homebrew/bin/docker \
+         "$HOME/.orbstack/bin/docker" "$HOME/.rd/bin/docker" \
+         /Applications/Docker.app/Contents/Resources/bin/docker; do
+  if [ -x "$c" ]; then docker_off_path="$c"; break; fi
+done
+# The startup file every new shell of the user's reads, so a coding agent's shells get it too.
+# The ~ is for the user to type, not for this script to expand.
+# shellcheck disable=SC2088
+case "${SHELL##*/}" in
+  zsh) rcfiles="~/.zshenv" ;;
+  bash) rcfiles="~/.bash_profile ~/.bashrc" ;;   # login and interactive bash read different files
+  *) rcfiles="" ;;
+esac
+
 docker_ok=false
-if ! command -v docker >/dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1 && [ -n "$docker_off_path" ]; then
+  check docker FAIL "docker is installed at $docker_off_path but not on this shell's PATH"
+  # An export typed in the user's terminal never reaches the agent's shell: it has to go
+  # in a startup file, and the agent has to start again to read it.
+  if [ -n "$rcfiles" ]; then
+    for rc in $rcfiles; do fix "echo 'export PATH=\"$(dirname "$docker_off_path"):\$PATH\"' >> $rc"; done
+  else
+    fix "Add $(dirname "$docker_off_path") to PATH in your shell's startup file."
+  fi
+  fix "Then restart your coding agent (or open a new terminal), and run this again."
+elif ! command -v docker >/dev/null 2>&1; then
   check docker FAIL "Docker is not installed"
   if [ "$os" = Darwin ]; then
     fix "Install and start one of: Docker Desktop (https://docs.docker.com/desktop/setup/install/mac-install/)," \
@@ -142,6 +169,9 @@ for port in 9200 5601; do
     check "port-$port" PASS "free"
   elif [ "$docker_ok" = true ] && [ "$(docker ps --filter "publish=$port" --format '{{.Label "com.docker.compose.project"}}' | head -n 1)" = arthur-deckard ]; then
     check "port-$port" PASS "Deckard's own Compose stack is running"
+  elif [ "$docker_ok" = false ]; then
+    # Without a working docker command there's no telling whether this is Deckard's own stack.
+    check "port-$port" INFO "in use; checked again once the docker check passes (see what: lsof -nP -iTCP:$port -sTCP:LISTEN)"
   else
     check "port-$port" FAIL "something else listens on 127.0.0.1:$port"
     fix "See what: lsof -nP -iTCP:$port -sTCP:LISTEN (or docker ps --filter publish=$port), and stop it."
