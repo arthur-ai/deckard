@@ -117,6 +117,9 @@ jobs:
             "https://github.com/osquery/osquery/releases/download/$OSQUERY_VERSION/osquery_$OSQUERY_VERSION-1.linux_$OSQUERY_ARCH.deb"
           echo "$OSQUERY_SHA256  $deb" | sha256sum -c -
           sudo dpkg -i "$deb"
+      - name: Pre-flight
+        # What the agent setup prompt runs first: it must pass on a machine that can run this.
+        run: docker-compose/preflight.sh
       - name: Install an agent for the scan to find
         # Claude Code's config directory, one of the things the catalog knows it by.
         run: mkdir -p ~/.claude

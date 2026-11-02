@@ -12,9 +12,9 @@ annotations:
   # arthurplatform/deckard:<appVersion>.
   arthur.ai/engine-version: "2.1.1070"
   arthur.ai/engine-digest: sha256:dd94278f813a0cbd4c5d3e0ee57ed9ba097e6050388b5c0912f62295a4618b85
-home: https://github.com/arthur-ai/arthur-deckard
+home: https://github.com/arthur-ai/deckard
 sources:
-  - https://github.com/arthur-ai/arthur-deckard
+  - https://github.com/arthur-ai/deckard
   - https://github.com/arthur-ai/arthur-engine/tree/main/ml-engine
 keywords:
   - ai

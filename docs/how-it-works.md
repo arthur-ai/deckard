@@ -42,6 +42,10 @@ of your AI workloads instead of a sliver of each.
 |---|---|---|---|
 | Cloud AI platforms | Google Cloud Vertex AI Agent Engine | `gcp_vertex` | Every Agent Engine in a project and region |
 | | AWS Bedrock and AgentCore | `aws_bedrock` | Bedrock agents and AgentCore runtimes, and the IAM roles CloudTrail shows calling Bedrock models |
+| | Google Cloud Run and GKE | `gcp_containers` | Cloud Run services and jobs and GKE workloads that run an agent's image or call Vertex AI models |
+| | AWS ECS and EKS | `aws_containers` | ECS services and tasks and EKS workloads that run an agent's image or run as a role that calls Bedrock models |
+| | Vercel | `vercel_ai` | A team's projects that call an LLM or run an agent, by their keys, integrations and traffic |
+| | Wiz | `wiz` | The AI agents and services, and the AI frameworks on workloads, that one Wiz tenant has inventoried |
 | Endpoints and servers | Jamf Pro | `jamf_pro` | The endpoint collector's inventory on each managed Mac |
 | | Google Cloud Compute Engine | `gcp_compute_engine` | The same, on VMs across projects, folders or an organization |
 | | AWS EC2 | `aws_ec2` | The same, on instances across regions and accounts, through SSM |

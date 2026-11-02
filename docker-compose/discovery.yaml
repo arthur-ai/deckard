@@ -6,6 +6,9 @@
 # Keep credentials out of this file: ${NAME} is replaced from the container's environment
 # (set it in .env), and {file: path} reads a file relative to this one (secrets/ is mounted
 # beside it). Both .env and secrets/ are gitignored.
+#
+# Deckard reads this file and .env only when it starts. Apply a change with:
+#   docker compose up -d --wait --force-recreate deckard
 version: 1
 enabled: true
 
@@ -81,7 +84,8 @@ sources:
   #       lookback_window_seconds: 21600
 
 # Exactly one destination. This one is the Elasticsearch beside Deckard; browse what it
-# receives in Kibana: http://localhost:5601/app/discover (user elastic, password changeme)
+# receives in Kibana: http://localhost:5601/app/discover#/view/deckard-findings (user
+# elastic, password changeme)
 destination:
   type: elasticsearch
   url: http://elasticsearch:9200
