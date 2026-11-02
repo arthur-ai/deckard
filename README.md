@@ -94,7 +94,7 @@ Each [release](https://github.com/arthur-ai/deckard/releases) publishes the imag
 
 | Class | Sources |
 |---|---|
-| Cloud AI platforms and workloads | Vertex AI Agent Engine, AWS Bedrock and AgentCore, Cloud Run and GKE, ECS and EKS, Vercel, Wiz |
+| Cloud AI platforms and workloads | Vertex AI Agent Engine, AWS Bedrock and AgentCore, Cloud Run and GKE, ECS and EKS, Vercel |
 | Endpoints and servers | Jamf Pro, Google Compute Engine, AWS EC2, this machine (`scan-local.sh`) |
 | Network and gateway logs | AWS CloudWatch Logs, Google Cloud Logging |
 | Security telemetry | Splunk Enterprise, Elastic Security |
