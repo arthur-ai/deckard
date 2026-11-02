@@ -2,7 +2,7 @@
 # Sets up the Elasticsearch and Kibana beside Deckard. Compose runs it twice:
 #
 #   setup.sh elasticsearch   the user Deckard writes as, and Kibana's own password
-#   setup.sh kibana          the data view Discover opens Deckard's events in
+#   setup.sh kibana          the data view, and the "Deckard findings" view Kibana opens on
 #
 # Every call creates or replaces, so it is safe to run on every `docker compose up`.
 set -eu
@@ -49,7 +49,28 @@ kibana() {
   call POST "$KIBANA/api/data_views/default" \
     '{"data_view_id": "deckard", "force": true}' \
     -H 'kbn-xsrf: true'
-  echo "Kibana is ready: http://localhost:5601/app/discover (user elastic)"
+  # "Deckard findings": every event Deckard sent, newest first, over the last 30 days, so a
+  # scan from up to an interval ago shows (Discover's own default is 15 minutes).
+  call POST "$KIBANA/api/saved_objects/search/deckard-findings?overwrite=true" \
+    '{"attributes": {
+        "title": "Deckard findings",
+        "description": "Every event Deckard sent: one per agent found, and one per scan saying how it went. Expand a row to see the whole event.",
+        "columns": ["event_type", "source.name", "agent.name", "outcome.succeeded", "outcome.records_published", "outcome.error"],
+        "sort": [["@timestamp", "desc"]],
+        "timeRestore": true,
+        "timeRange": {"from": "now-30d", "to": "now"},
+        "kibanaSavedObjectMeta": {"searchSourceJSON": "{\"query\": {\"query\": \"\", \"language\": \"kuery\"}, \"filter\": [], \"indexRefName\": \"kibanaSavedObjectMeta.searchSourceJSON.index\"}"}
+      },
+      "references": [{"name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern", "id": "deckard"}]}' \
+    -H 'kbn-xsrf: true'
+  # Kibana opens on that view after login, and any other Discover search defaults to 30
+  # days. Kibana 9 serves its advanced settings only on an internal API, so a Kibana that
+  # refuses this keeps its defaults rather than failing the setup.
+  call POST "$KIBANA/internal/kibana/settings" \
+    '{"changes": {"defaultRoute": "/app/discover#/view/deckard-findings", "timepicker:timeDefaults": "{\"from\": \"now-30d\", \"to\": \"now\"}"}}' \
+    -H 'kbn-xsrf: true' -H 'x-elastic-internal-origin: kibana' \
+    || echo "Kibana kept its default landing page and time range"
+  echo "Kibana is ready: http://localhost:5601/app/discover#/view/deckard-findings (user elastic)"
 }
 
 "$1"

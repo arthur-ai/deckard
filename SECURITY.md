@@ -5,7 +5,7 @@
 Please report security vulnerabilities in Arthur Deckard privately. Do not open a public GitHub
 issue, discussion or pull request for a suspected vulnerability.
 
-- Use GitHub's [private vulnerability reporting](https://github.com/arthur-ai/arthur-deckard/security/advisories/new), or
+- Use GitHub's [private vulnerability reporting](https://github.com/arthur-ai/deckard/security/advisories/new), or
 - email **oss-security@arthur.ai**.
 
 Include as much of the following as you can:

@@ -54,6 +54,11 @@ services:
       xpack.security.http.ssl.enabled: "false"
       xpack.license.self_generated.type: basic
       ES_JAVA_OPTS: -Xms1g -Xmx1g
+      # A local demo on one node: a disk over 90% full (by Elasticsearch's count, size minus
+      # available) would otherwise leave its indices unassigned and the setup failing, and
+      # memory-mapped files would need the host's vm.max_map_count raised, which takes root.
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      node.store.allow_mmap: "false"
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
     ports:
@@ -67,7 +72,7 @@ services:
       timeout: 5s
       retries: 60
 
-  # http://localhost:5601/app/discover, as user elastic.
+  # http://localhost:5601/app/discover#/view/deckard-findings, as user elastic.
   kibana:
     image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-9.5.5}
     restart: unless-stopped
@@ -100,7 +105,7 @@ services:
       elasticsearch:
         condition: service_healthy
 
-  # One-shot: the Kibana data view Discover opens Deckard's events in.
+  # One-shot: the Kibana data view and the "Deckard findings" view of Deckard's events.
   kibana-setup:
     image: *elastic-image
     command: ["sh", "/setup/setup.sh", "kibana"]

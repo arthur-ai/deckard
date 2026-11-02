@@ -39,7 +39,7 @@ on a schedule and sends what it finds to your SIEM or a webhook.
    kubectl -n deckard logs -f deployment/deckard
    ```
 
-   That installs the newest [release](https://github.com/arthur-ai/arthur-deckard/releases);
+   That installs the newest [release](https://github.com/arthur-ai/deckard/releases);
    add `--version` to pin one. From a clone, `./charts/deckard` in place of the `oci://`
    reference installs that checkout's version.
 

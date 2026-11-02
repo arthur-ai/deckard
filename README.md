@@ -4,7 +4,7 @@
 
 # Arthur Deckard
 
-[![CI](https://github.com/arthur-ai/arthur-deckard/actions/workflows/ci.yaml/badge.svg)](https://github.com/arthur-ai/arthur-deckard/actions/workflows/ci.yaml)
+[![CI](https://github.com/arthur-ai/deckard/actions/workflows/ci.yaml/badge.svg)](https://github.com/arthur-ai/deckard/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Scan your endpoints, cloud, and network for shadow Agents and track them in your SIEM.**
@@ -16,12 +16,28 @@ webhook. It's headless, read-only, and runs entirely in your environment.
 ## Quickstart
 
 Find the AI agents on your own machine in a couple of minutes, with no accounts or
-credentials. You need Docker and [osquery](https://osquery.io/downloads)
-(`brew install --cask osquery` on a Mac).
+credentials. You need Docker with Compose 2.24 or later, and
+[osquery](https://osquery.io/downloads) (`brew install --cask osquery` on a Mac).
+
+### Set up with a coding agent
+
+Paste this into Claude Code, Cursor, Codex or any coding agent on your machine:
+
+```text
+Download https://raw.githubusercontent.com/arthur-ai/deckard/main/docs/agent-setup/prompt.md with curl, read all of it, and follow its instructions to set up Arthur Deckard on this machine.
+```
+
+It checks your machine first and, if something needs installing or your password, stops and
+tells you the command to run yourself. Then it runs the steps below, shows you the agents it
+found, and can walk you through adding a cloud, MDM or SIEM source and your own destination.
+The [prompt](docs/agent-setup/prompt.md) never has it run `sudo`, and is plain Markdown to
+read first.
+
+### Or by hand
 
 ```bash
-git clone https://github.com/arthur-ai/arthur-deckard.git
-cd arthur-deckard/docker-compose
+git clone https://github.com/arthur-ai/deckard.git
+cd deckard/docker-compose
 ./scan-local.sh
 docker compose up -d --wait
 ```
@@ -30,9 +46,11 @@ docker compose up -d --wait
 [ai-detection-spec](https://github.com/arthur-ai/ai-detection-spec), our open format and
 catalog for finding AI agents on a machine. It changes nothing and doesn't need root.
 Deckard matches what it finds against that catalog and sends each agent to an
-Elasticsearch running beside it. Open [Kibana](http://localhost:5601/app/discover), log in
-as `elastic` with password `changeme`, and Discover lists them. Or ask Elasticsearch from
-the terminal:
+Elasticsearch running beside it, within a minute of starting. Open
+[Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana, log
+in as `elastic` with password `changeme`, and it lists every event Deckard sent: one per
+agent found and one per scan, over the last 30 days. Expand a row to see the whole event.
+Or ask Elasticsearch from the terminal:
 
 ```bash
 curl -s -u elastic:changeme 'localhost:9200/_query?format=txt' \
@@ -51,7 +69,9 @@ curl -s -u elastic:changeme 'localhost:9200/_query?format=txt' \
 
 Next, add your cloud, MDM or SIEM sources to
 [`docker-compose/discovery.yaml`](docker-compose/discovery.yaml) (it has commented
-examples), and point its `destination` at your own Elasticsearch, Splunk or webhook. See
+examples), and point its `destination` at your own Elasticsearch, Splunk or webhook. Deckard
+reads the file only when its container starts, so apply each change with
+`docker compose up -d --force-recreate deckard`. See
 [`docker-compose/`](docker-compose/README.md) for more.
 
 ## Deploy on Kubernetes
@@ -67,14 +87,14 @@ helm install deckard oci://ghcr.io/arthur-ai/charts/deckard -n deckard --set-fil
 The config references each key in the Secret as `${NAME}`. See the
 [chart's README](charts/deckard/README.md) for the details and cloud workload identity.
 
-Each [release](https://github.com/arthur-ai/arthur-deckard/releases) publishes the image
+Each [release](https://github.com/arthur-ai/deckard/releases) publishes the image
 `arthurplatform/deckard` and this chart at the same version; add `--version` to pin one.
 
 ## Integrations
 
 | Class | Sources |
 |---|---|
-| Cloud AI platforms | Vertex AI Agent Engine, AWS Bedrock and AgentCore |
+| Cloud AI platforms and workloads | Vertex AI Agent Engine, AWS Bedrock and AgentCore, Cloud Run and GKE, ECS and EKS, Vercel, Wiz |
 | Endpoints and servers | Jamf Pro, Google Compute Engine, AWS EC2, this machine (`scan-local.sh`) |
 | Network and gateway logs | AWS CloudWatch Logs, Google Cloud Logging |
 | Security telemetry | Splunk Enterprise, Elastic Security |
@@ -82,7 +102,7 @@ Each [release](https://github.com/arthur-ai/arthur-deckard/releases) publishes t
 **Destinations:** Elasticsearch and Elastic Security, Splunk HTTP Event Collector, or any
 HTTPS webhook.
 
-Missing one you use? [Open an issue](https://github.com/arthur-ai/arthur-deckard/issues).
+Missing one you use? [Open an issue](https://github.com/arthur-ai/deckard/issues).
 
 ## Documentation
 
@@ -96,7 +116,7 @@ Missing one you use? [Open an issue](https://github.com/arthur-ai/arthur-deckard
 Deckard is the standalone discovery mode of the
 [Arthur Engine](https://github.com/arthur-ai/arthur-engine), where its code lives. This
 repository holds its deployment and docs. Bug reports and integration requests are welcome
-in [issues](https://github.com/arthur-ai/arthur-deckard/issues); report security issues
+in [issues](https://github.com/arthur-ai/deckard/issues); report security issues
 privately, as described in [SECURITY.md](SECURITY.md). How releases are made:
 [RELEASING.md](RELEASING.md).
 
