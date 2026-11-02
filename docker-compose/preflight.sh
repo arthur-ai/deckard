@@ -80,9 +80,9 @@ done
 # The ~ is for the user to type, not for this script to expand.
 # shellcheck disable=SC2088
 case "${SHELL##*/}" in
-  zsh) rcfile="~/.zshenv" ;;
-  bash) rcfile="~/.bash_profile" ;;
-  *) rcfile="your shell's startup file" ;;
+  zsh) rcfiles="~/.zshenv" ;;
+  bash) rcfiles="~/.bash_profile ~/.bashrc" ;;   # login and interactive bash read different files
+  *) rcfiles="" ;;
 esac
 
 docker_ok=false
@@ -90,8 +90,12 @@ if ! command -v docker >/dev/null 2>&1 && [ -n "$docker_off_path" ]; then
   check docker FAIL "docker is installed at $docker_off_path but not on this shell's PATH"
   # An export typed in the user's terminal never reaches the agent's shell: it has to go
   # in a startup file, and the agent has to start again to read it.
-  fix "echo 'export PATH=\"$(dirname "$docker_off_path"):\$PATH\"' >> $rcfile" \
-      "Then restart your coding agent (or open a new terminal), and run this again."
+  if [ -n "$rcfiles" ]; then
+    for rc in $rcfiles; do fix "echo 'export PATH=\"$(dirname "$docker_off_path"):\$PATH\"' >> $rc"; done
+  else
+    fix "Add $(dirname "$docker_off_path") to PATH in your shell's startup file."
+  fi
+  fix "Then restart your coding agent (or open a new terminal), and run this again."
 elif ! command -v docker >/dev/null 2>&1; then
   check docker FAIL "Docker is not installed"
   if [ "$os" = Darwin ]; then
