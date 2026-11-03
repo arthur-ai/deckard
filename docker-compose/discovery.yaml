@@ -49,7 +49,7 @@ sources:
   #       # Not applied for Vertex: every scan lists every engine in the region.
   #       lookback_window_seconds: 21600
 
-  # AWS Bedrock: agents, AgentCore runtimes, and the IAM roles CloudTrail shows
+  # Amazon Bedrock: agents, AgentCore runtimes, and the IAM roles CloudTrail shows
   # calling Bedrock models.
   # - name: bedrock-prod
   #   vendor: aws_bedrock
