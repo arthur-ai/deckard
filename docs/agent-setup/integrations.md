@@ -9,16 +9,16 @@ Every field and permission is in the
 
 | # | Source | `vendor` | What Deckard reads |
 |---|---|---|---|
-| 1 | Google Vertex AI Agent Engine | `gcp_vertex` | Every Agent Engine in one project and region |
+| 1 | Google Cloud Vertex AI Agent Engine | `gcp_vertex` | Every Agent Engine in one project and region |
 | 2 | Google Cloud Run and GKE | `gcp_containers` | Workloads that run an agent's image or call Vertex AI models |
-| 3 | AWS Bedrock and AgentCore | `aws_bedrock` | Bedrock agents, AgentCore runtimes, and the IAM roles CloudTrail shows calling Bedrock models |
-| 4 | AWS ECS and EKS | `aws_containers` | Workloads that run an agent's image or run as a role calling Bedrock models |
+| 3 | Amazon Bedrock (and AgentCore) | `aws_bedrock` | Bedrock agents, AgentCore runtimes, and the IAM roles CloudTrail shows calling Bedrock models |
+| 4 | Amazon ECS and EKS | `aws_containers` | Workloads that run an agent's image or run as a role calling Bedrock models |
 | 5 | Vercel | `vercel_ai` | A team's projects that call an LLM or run an agent |
 | 6 | Jamf Pro (managed Macs) | `jamf_pro` | The endpoint collector's inventory on each Mac |
-| 7 | Google Compute Engine VMs | `gcp_compute_engine` | The endpoint collector's inventory on each VM |
-| 8 | AWS EC2 instances | `aws_ec2` | The endpoint collector's inventory on each instance, through SSM |
-| 9 | AWS network logs (CloudWatch Logs) | `aws_network` | Route 53 Resolver query logs or VPC flow logs: hosts calling LLM APIs |
-| 10 | Google Cloud network logs | `gcp_network` | Cloud DNS query logs and VPC flow logs: workloads calling LLM APIs |
+| 7 | Google Cloud Compute Engine | `gcp_compute_engine` | The endpoint collector's inventory on each VM |
+| 8 | Amazon EC2 | `aws_ec2` | The endpoint collector's inventory on each instance, through SSM |
+| 9 | AWS Network Logs (CloudWatch Logs) | `aws_network` | Route 53 Resolver query logs or VPC flow logs: hosts calling LLM APIs |
+| 10 | Google Cloud Network Logs (Cloud Logging) | `gcp_network` | Cloud DNS query logs and VPC flow logs: workloads calling LLM APIs |
 | 11 | Splunk Enterprise | `splunk_enterprise` | The results of the user's SPL search |
 | 12 | Elastic Security | `elastic_security` | The results of the user's ES\|QL query |
 | 13 | None for now: keep only this machine | | |

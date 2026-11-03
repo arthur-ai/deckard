@@ -12,19 +12,19 @@ into four classes, and each class sees agents a different way:
 
 | Class | What Deckard reads | What it finds |
 |---|---|---|
-| **Cloud AI platforms** | The platform's own inventory of deployed agents, and its audit trail | Every agent deployed in a project, account and region, and the identities calling hosted models |
-| **Endpoints and servers** | What Arthur's open-source endpoint collector reports through your MDM or cloud tooling | Agentic coding tools, autonomous local agents, AI browsers and extensions, on laptops, VMs and dev boxes |
+| **Cloud AI platforms** | The platform's own inventory of deployed agents and workloads and its audit trail, and, for VMs, what Arthur's open-source endpoint collector reports through your cloud tooling | Every agent deployed in a project, account and region, the identities calling hosted models, and agentic tools on cloud VMs |
+| **Employee endpoints** | What the endpoint collector reports through your MDM | Agentic coding tools, autonomous local agents, AI browsers and extensions on laptops and dev boxes |
+| **Security telemetry (SIEM)** | Your SIEM, through your own SPL or ES\|QL search | Agents that show up in the logs and events you already collect |
 | **Network and gateway logs** | DNS query logs, flow logs and gateway logs | Internal workloads making requests to GenAI providers or your own LLM gateway, whether or not anyone registered them |
-| **Security telemetry** | Your SIEM, through your own SPL or ES\|QL search | Agents that show up in the logs and events you already collect |
 
 ```mermaid
 flowchart LR
   subgraph Classes["Systems you already run (read-only)"]
     direction TB
     C["Cloud AI platforms"]
-    E["Endpoints and servers"]
+    E["Employee endpoints"]
+    S["Security telemetry (SIEM)"]
     N["Network and gateway logs"]
-    S["Security telemetry"]
   end
   Classes --> D["Deckard<br/>scans on a schedule"]
   D --> L["Elasticsearch and Elastic Security"]
@@ -41,20 +41,20 @@ of your AI workloads instead of a sliver of each.
 | Class | Integration | `vendor` | What it reads |
 |---|---|---|---|
 | Cloud AI platforms | Google Cloud Vertex AI Agent Engine | `gcp_vertex` | Every Agent Engine in a project and region |
-| | AWS Bedrock and AgentCore | `aws_bedrock` | Bedrock agents and AgentCore runtimes, and the IAM roles CloudTrail shows calling Bedrock models |
+| | Google Cloud Compute Engine | `gcp_compute_engine` | The endpoint collector's inventory on VMs across projects, folders or an organization |
+| | Amazon EC2 | `aws_ec2` | The endpoint collector's inventory on instances across regions and accounts, through SSM |
 | | Google Cloud Run and GKE | `gcp_containers` | Cloud Run services and jobs and GKE workloads that run an agent's image or call Vertex AI models |
-| | AWS ECS and EKS | `aws_containers` | ECS services and tasks and EKS workloads that run an agent's image or run as a role that calls Bedrock models |
+| | Amazon Bedrock | `aws_bedrock` | Bedrock agents and AgentCore runtimes, and the IAM roles CloudTrail shows calling Bedrock models |
 | | Vercel | `vercel_ai` | A team's projects that call an LLM or run an agent, by their keys, integrations and traffic |
-| Endpoints and servers | Jamf Pro | `jamf_pro` | The endpoint collector's inventory on each managed Mac |
-| | Google Cloud Compute Engine | `gcp_compute_engine` | The same, on VMs across projects, folders or an organization |
-| | AWS EC2 | `aws_ec2` | The same, on instances across regions and accounts, through SSM |
+| | Amazon ECS and EKS | `aws_containers` | ECS services and tasks and EKS workloads that run an agent's image or run as a role that calls Bedrock models |
+| Employee endpoints | Jamf Pro | `jamf_pro` | The endpoint collector's inventory on each managed Mac |
 | | This machine | `local` | The same, on the machine running Deckard, from a folder `scan-local.sh` writes. Docker Compose only |
-| Network and gateway logs | AWS CloudWatch Logs | `aws_network` | Route 53 Resolver query logs, VPC flow logs, or your own format |
-| | Google Cloud Logging | `gcp_network` | Cloud DNS query logs and VPC flow logs |
-| Security telemetry | Splunk Enterprise | `splunk_enterprise` | Your SPL search |
+| Security telemetry (SIEM) | Splunk Enterprise | `splunk_enterprise` | Your SPL search |
 | | Elastic Security | `elastic_security` | Your ES\|QL query |
+| Network and gateway logs | AWS Network Logs | `aws_network` | Route 53 Resolver query logs, VPC flow logs, or your own format, read from CloudWatch Logs |
+| | Google Cloud Network Logs | `gcp_network` | Cloud DNS query logs and VPC flow logs, read from Cloud Logging |
 
-The endpoint integrations read what Arthur's open-source
+Jamf Pro, Compute Engine and EC2 read what Arthur's open-source
 [endpoint collector](https://github.com/arthur-ai/arthur-engine/tree/main/integrations/endpoint-ai-discovery)
 writes to each machine. The signatures it detects agents by are open source too, so coverage
 keeps up with new tools as they appear.
