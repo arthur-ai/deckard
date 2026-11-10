@@ -183,18 +183,41 @@ for c in "${OSQI:-}" /usr/local/bin/osqueryi /opt/osquery/lib/osquery.app/Conten
          /usr/bin/osqueryi "$(command -v osqueryi 2>/dev/null)"; do
   if [ -n "$c" ] && [ -x "$c" ]; then osqueryi="$c"; break; fi
 done
-if [ -n "$osqueryi" ]; then
-  check osquery PASS "$("$osqueryi" --version 2>/dev/null | head -n 1)"
+v=5.24.0
+rel="https://github.com/osquery/osquery/releases/download/$v"
+# Install osquery's own Linux build under ~/.local/share/osquery, without root. It brings its
+# own libraries, so it runs whatever the distro ships. Its osqueryi is a link to osqueryd, which
+# runs as the shell only when called by that name, so the link is made beside it.
+fix_tarball() {
+  local sum d='~/.local/share/osquery'
+  case "$arch" in
+    x86_64) sum=3e2fbfe0d9e3cdde60cc58903d03ab3d44449c481bf1117e42351f9e4a460ade ;;
+    aarch64) sum=f2a8a2a46b6bd6433189991fe64b225d0fd5c453787af470bcf98563e937b425 ;;
+    *) fix "Install osquery 5.x from https://osquery.io/downloads. Elsewhere than /usr/bin or /usr/local/bin, run OSQI=/path/to/osqueryi ./scan-local.sh"; return ;;
+  esac
+  fix "mkdir -p $d && curl -fsSLo /tmp/osquery.tar.gz $rel/osquery-${v}_1.linux_$arch.tar.gz && echo '$sum  /tmp/osquery.tar.gz' | sha256sum -c - && tar xzf /tmp/osquery.tar.gz -C $d opt/osquery/bin/osqueryd && ln -sf $d/opt/osquery/bin/osqueryd $d/osqueryi" \
+      "Then run with it: export OSQI=$d/osqueryi   (in the terminal you run ./start.sh or ./scan-local.sh from)"
+}
+
+if [ -n "$osqueryi" ] && out="$("$osqueryi" --version 2>&1)"; then
+  check osquery PASS "$(printf '%s\n' "$out" | head -n 1)"
+elif [ -n "$osqueryi" ]; then
+  check osquery FAIL "$osqueryi does not run: $(printf '%s\n' "$out" | head -n 1)"
+  if [ "$os" = Darwin ]; then
+    fix "brew reinstall --cask osquery   (or the .pkg from https://osquery.io/downloads)"
+  else
+    fix "A missing shared library usually means the distro's package was built against libraries a later update replaced. Until the distro rebuilds it, use osquery's own build:"
+    fix_tarball
+  fi
 else
   check osquery FAIL "osquery is not installed; scan-local.sh needs its osqueryi"
-  v=5.24.0
-  rel="https://github.com/osquery/osquery/releases/download/$v"
   case "$os/$pm/$arch" in
     Darwin/*) fix "brew install --cask osquery   (or the .pkg from https://osquery.io/downloads)" ;;
     Linux/apt/x86_64) fix "curl -fsSLo /tmp/osquery.deb $rel/osquery_$v-1.linux_amd64.deb && echo '8ae0416d85336a1aea6883920ae9c2751a98538fe0bb624822e92934d3be5592  /tmp/osquery.deb' | sha256sum -c - && sudo dpkg -i /tmp/osquery.deb" ;;
     Linux/apt/aarch64) fix "curl -fsSLo /tmp/osquery.deb $rel/osquery_$v-1.linux_arm64.deb && echo 'ee737e5d2d0c011ed5a15883f930c5df4913365e12b262598d3250ce1340645c  /tmp/osquery.deb' | sha256sum -c - && sudo dpkg -i /tmp/osquery.deb" ;;
     Linux/dnf/x86_64) fix "curl -fsSLo /tmp/osquery.rpm $rel/osquery-$v-1.linux.x86_64.rpm && echo '27fd7a2b6e79e4f6f86d7af2f5b016bc20d42693bd9818258f29c348f13b79f6  /tmp/osquery.rpm' | sha256sum -c - && sudo rpm -i /tmp/osquery.rpm" ;;
     Linux/dnf/aarch64) fix "curl -fsSLo /tmp/osquery.rpm $rel/osquery-$v-1.linux.aarch64.rpm && echo 'dac0632d82f33177a67d05c033032097c97db3f60110aad1c0a1f395ae9c9d40  /tmp/osquery.rpm' | sha256sum -c - && sudo rpm -i /tmp/osquery.rpm" ;;
+    Linux/*) fix_tarball ;;
     *) fix "Install osquery 5.x from https://osquery.io/downloads. Elsewhere than /usr/bin or /usr/local/bin, run OSQI=/path/to/osqueryi ./scan-local.sh" ;;
   esac
 fi
