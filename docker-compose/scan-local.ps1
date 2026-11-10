@@ -180,4 +180,5 @@ Remove-Scratch
 Write-Host "Done: $($rows.Count) rows -> $Folder"
 Write-Host 'Deckard reads it on its next scan. To start Deckard and see what it finds:'
 Write-Host '  docker compose up -d --wait'
-Write-Host '  then open http://localhost:5601/app/discover (user elastic, password changeme)'
+Write-Host '  then open http://localhost:5601/app/discover#/view/deckard-findings (user elastic, password changeme)'
+Write-Host 'If Deckard is already running, publish this scan now: docker compose restart deckard'

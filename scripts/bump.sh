@@ -72,7 +72,9 @@ if [ -n "$engine" ]; then
   set_after 'COLLECTOR_REF=' "$commit" "$scan"
   set_after 'COLLECT_SH_SHA256=' "$mac_sha256" "$scan"
   set_after 'COLLECT_LINUX_SH_SHA256=' "$linux_sha256" "$scan"
+  # shellcheck disable=SC2016 # matching the literal PowerShell variable names in the file
   set_after '$CollectorRef = ' "'$commit'" "$scan_windows"
+  # shellcheck disable=SC2016
   set_after '$DiscoveryWindowsSqlSha256 = ' "'$windows_sha256'" "$scan_windows"
 fi
 
