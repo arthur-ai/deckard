@@ -48,12 +48,23 @@ yourself. The scan lists what's installed on this machine using the osquery quer
 catalog for finding AI agents on a machine. It changes nothing and doesn't need root.
 
 ```text
-==> Found 3 AI agent(s) on this machine
-   agent.name   |  source.name
-----------------+---------------
-Claude Code     |this-machine
-Claude Desktop  |this-machine
-Cursor          |this-machine
+Deckard · scanning my-laptop
+
+✓ Machine ready      Docker 29.9.2 · 63 GB RAM · osquery 5.24.0
+✓ Scanned            6s
+✓ Deckard running    Elasticsearch + Kibana · 8s
+✓ Scan published     4 AI agents found
+
+AI agents on this machine
+  Claude Code   Coding agent    ~/.claude/
+  Codex CLI     Coding agent    ~/.codex/
+  Hermes Agent  Personal agent  ~/.local/bin/hermes
+  Pi            Coding agent    ~/.pi/
+
+Explore in Kibana  http://localhost:5601/app/discover#/view/deckard-findings
+                   user elastic, password changeme
+Rescan             ./start.sh
+Add sources        cloud, MDM or SIEM: see docker-compose/README.md
 ```
 
 Open [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana,
