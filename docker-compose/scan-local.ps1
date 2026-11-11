@@ -15,9 +15,10 @@
 # yourself, it sees what you can read, which on a laptop is where these tools install. Run
 # it again to refresh what Deckard reports.
 #
-# CMDLETS ONLY: NO .NET TYPES OR METHODS. Where AppLocker or WDAC is enforced, an unsigned
-# script runs in PowerShell's ConstrainedLanguage mode, which refuses those but runs cmdlets,
-# so this script runs there unsigned. CI runs it in that mode.
+# CMDLETS AND CORE TYPES ONLY. Where AppLocker or WDAC is enforced, an unsigned script runs
+# in PowerShell's ConstrainedLanguage mode, which refuses Add-Type, most .NET types and their
+# methods, and [pscustomobject]@{...}, but runs cmdlets, core types such as [version] and
+# reading an object's properties. So this script runs there unsigned; CI runs it in that mode.
 
 param([string]$Folder)
 
@@ -141,7 +142,10 @@ $env:TMP = $savedTmp
 $env:TEMP = $savedTemp
 
 if (-not $process.HasExited) {
+    # Stop-Process returns before the process has gone; until it has, it holds the staged
+    # file open and Fail can't remove it.
     $process | Stop-Process -Force -ErrorAction SilentlyContinue
+    $process | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
     Fail "osquery did not finish in $TimeoutSeconds seconds; the folder still holds the previous scan, if any"
 }
 if ($process.ExitCode -ne 0) {
