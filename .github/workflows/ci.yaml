@@ -152,8 +152,7 @@ jobs:
         run: docker compose logs
 
   # scan-local.ps1 on Windows, under what a Windows laptop may impose on an unsigned script,
-  # as an administrator and as a standard user. GitHub's Windows runners can't run Deckard's
-  # Linux containers, so smoke-windows reads this job's scan.
+  # as an administrator and as a standard user. quickstart-windows runs it with Deckard.
   scan-windows:
     runs-on: windows-2025
     timeout-minutes: 20
@@ -323,50 +322,108 @@ jobs:
             throw "the standard user's scan misses what an administrator's finds of theirs: $($missed -join '; ')"
           }
           exit 0
-      - name: Upload the scan, for smoke-windows
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-local-scan
-          path: docker-compose/local-scan/
 
-  # The Windows quickstart's second half: Deckard reads scan-windows' scan of a Windows
-  # machine, and its agent reaches Elasticsearch as a Windows one.
-  smoke-windows:
-    needs: scan-windows
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  # The Windows quickstart end to end, as the README has a person run it from PowerShell:
+  # scan-local.ps1 scans the machine, Docker Desktop runs Deckard over the scan, and its agent
+  # reaches Elasticsearch as a Windows one. Docker doesn't support Docker Desktop on Windows
+  # Server, but the pinned build runs on this one.
+  quickstart-windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell
+    env:
+      OSQUERY_VERSION: 5.24.0
+      OSQUERY_MSI_SHA256: 5f123c07936ee927d7b44ccdaf5d01c4b9bab2956328a4d8c7adc3395812a659
+      # Docker Desktop 4.99.0, and the hash Docker publishes for its installer.
+      DOCKER_DESKTOP_BUILD: '245822'
+      DOCKER_DESKTOP_SHA256: a5e299131c9c53d60f3f752b162078945eb5faf6eedcf0be20a214c6e6cea444
     steps:
       - uses: actions/checkout@v4
       - name: Read the pins
+        shell: bash
         run: scripts/versions.sh >> "$GITHUB_ENV"
-      - name: Stage the engine image as this version of Deckard
+      - name: Install Docker Desktop
         run: |
-          docker pull "arthurplatform/ml-engine@$ENGINE_DIGEST"
-          docker tag "arthurplatform/ml-engine@$ENGINE_DIGEST" "arthurplatform/deckard:$DECKARD_VERSION"
-      - name: Take the Windows scan
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-local-scan
-          path: docker-compose/local-scan
+          # The runner's own Docker runs Windows containers, on the pipe Docker Desktop uses.
+          Stop-Service docker
+          Set-Service docker -StartupType Disabled
+          $installer = Join-Path $env:RUNNER_TEMP 'DockerDesktopInstaller.exe'
+          curl.exe -fsSL -o $installer "https://desktop.docker.com/win/main/amd64/$env:DOCKER_DESKTOP_BUILD/Docker%20Desktop%20Installer.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'could not download Docker Desktop' }
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $env:DOCKER_DESKTOP_SHA256) {
+            throw 'the Docker Desktop installer does not match its pinned hash'
+          }
+          $install = Start-Process $installer -Wait -PassThru -ArgumentList `
+            'install', '--quiet', '--accept-license', '--backend=wsl-2', '--always-run-service', '--no-windows-containers'
+          if ($install.ExitCode -ne 0) { throw "the Docker Desktop installer exited $($install.ExitCode)" }
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:ProgramFiles\Docker\Docker\resources\bin"
+      - name: Start Docker Desktop
+        run: |
+          # Windows PowerShell turns a native command's redirected stderr into errors, which
+          # the default 'Stop' would throw on while the engine starts.
+          $ErrorActionPreference = 'Continue'
+          docker desktop start --detach
+          if ($LASTEXITCODE -ne 0) { throw "docker desktop start exited $LASTEXITCODE" }
+          foreach ($i in 1..30) {
+            if ((docker info --format '{{.OSType}}' 2>$null) -eq 'linux') { break }
+            Start-Sleep -Seconds 10
+          }
+          docker version
+          if ((docker info --format '{{.OSType}}' 2>$null) -ne 'linux') {
+            throw 'Docker Desktop did not start its Linux engine'
+          }
+      - name: Install osquery
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'osquery.msi'
+          curl.exe -fsSL -o $msi "https://github.com/osquery/osquery/releases/download/$env:OSQUERY_VERSION/osquery-$env:OSQUERY_VERSION.msi"
+          if ($LASTEXITCODE -ne 0) { throw 'could not download osquery' }
+          if ((Get-FileHash $msi -Algorithm SHA256).Hash -ne $env:OSQUERY_MSI_SHA256) {
+            throw 'osquery.msi does not match its pinned hash'
+          }
+          $install = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "msiexec exited $($install.ExitCode)" }
+      - name: Install an agent for the scan to find
+        # Claude Code's config directory, one of the things the catalog knows it by.
+        run: New-Item -ItemType Directory -Force (Join-Path $env:USERPROFILE '.claude') | Out-Null
+      - name: Stage the engine image as this version of Deckard
+        # The tag the Compose file runs, so it runs this image rather than pulling one.
+        run: |
+          docker pull "arthurplatform/ml-engine@$env:ENGINE_DIGEST"
+          docker tag "arthurplatform/ml-engine@$env:ENGINE_DIGEST" "arthurplatform/deckard:$env:DECKARD_VERSION"
+      - name: Scan this machine
+        working-directory: docker-compose
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
+          if ($LASTEXITCODE -ne 0) { throw "scan-local.ps1 exited $LASTEXITCODE" }
       - name: Start Deckard
         working-directory: docker-compose
+        # --wait, as the READMEs say to run it: it fails if a one-shot setup service does.
         run: docker compose up -d --wait
       - name: Wait for the scan to reach Elasticsearch
         run: |
-          found() {
-            jq -n --arg q "$1" '{query: {query_string: {query: $q}}}' \
-              | curl -fsS -u elastic:changeme -H 'Content-Type: application/json' -d @- \
-                  'http://127.0.0.1:9200/logs-arthur.discovery-*/_count' \
-              | jq -e '.count > 0' >/dev/null
+          $auth = @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes('elastic:changeme')) }
+          # Whether any of Deckard's events match a query string; none do before the first write.
+          function Found([string]$Query) {
+            $body = @{ query = @{ query_string = @{ query = $Query } } } | ConvertTo-Json -Depth 5
+            try {
+              $result = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:9200/logs-arthur.discovery-*/_count' `
+                -Headers $auth -ContentType 'application/json' -Body $body
+              return $result.count -gt 0
+            } catch {
+              return $false
+            }
           }
-          scan='event_type:"arthur.discovery.scan_outcome" AND source.name:"this-machine" AND source.config_name:"inventory"'
-          for _ in $(seq 60); do
-            found "$scan" && break
-            sleep 5
-          done
-          found "$scan AND outcome.succeeded:true" || { echo "::error::no successful scan"; exit 1; }
-          found 'event_type:"arthur.discovery.agent" AND agent.name:"Claude Code" AND agent.platform:"windows"' \
-            || { echo "::error::the scan did not report Claude Code on Windows"; exit 1; }
+          $scan = 'event_type:"arthur.discovery.scan_outcome" AND source.name:"this-machine" AND source.config_name:"inventory"'
+          foreach ($i in 1..60) {
+            if (Found $scan) { break }
+            Start-Sleep -Seconds 5
+          }
+          if (-not (Found "$scan AND outcome.succeeded:true")) { throw 'no successful scan' }
+          if (-not (Found 'event_type:"arthur.discovery.agent" AND agent.name:"Claude Code" AND agent.platform:"windows"')) {
+            throw 'the scan did not report Claude Code on Windows'
+          }
       - name: Logs
         if: always()
         working-directory: docker-compose
