@@ -346,9 +346,10 @@ jobs:
         run: scripts/versions.sh >> "$GITHUB_ENV"
       - name: Install Docker Desktop
         run: |
-          # The runner's own Docker runs Windows containers, on the pipe Docker Desktop uses.
-          Stop-Service docker
-          Set-Service docker -StartupType Disabled
+          # The runner's own Docker, if the image still has it, runs Windows containers on the
+          # pipe Docker Desktop uses.
+          Get-Service docker -ErrorAction SilentlyContinue | Stop-Service -PassThru |
+            Set-Service -StartupType Disabled
           $installer = Join-Path $env:RUNNER_TEMP 'DockerDesktopInstaller.exe'
           curl.exe -fsSL -o $installer "https://desktop.docker.com/win/main/amd64/$env:DOCKER_DESKTOP_BUILD/Docker%20Desktop%20Installer.exe"
           if ($LASTEXITCODE -ne 0) { throw 'could not download Docker Desktop' }
