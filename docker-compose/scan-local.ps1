@@ -29,7 +29,7 @@ $ProgressPreference = 'SilentlyContinue'
 # The query, pinned to the commit of the engine release Deckard runs, so it writes the scan
 # that release reads, and checked against this hash. scripts/bump.sh moves both, with
 # scan-local.sh's pins.
-$CollectorRef = 'abe8a9d0a9e3074a2adcbf77a8b2c950f8703f36'
+$CollectorRef = 'd4d830de21e2d8a8d305d55d59b0620c44c65f52'
 $DiscoveryWindowsSqlSha256 = '36e34cc7319751f46ce10f7091e0f9a9a281c8bab2728e8df310b17aed295759'
 $QueryUrl = "https://raw.githubusercontent.com/arthur-ai/arthur-engine/$CollectorRef/integrations/endpoint-ai-discovery/vendor/ai-detection-spec/dist/discovery-windows.sql"
 

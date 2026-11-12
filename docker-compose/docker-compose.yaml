@@ -7,7 +7,7 @@ x-elastic-image: &elastic-image docker.elastic.co/elasticsearch/elasticsearch:${
 
 services:
   deckard:
-    image: arthurplatform/deckard:${DECKARD_VERSION-0.2.1}
+    image: arthurplatform/deckard:${DECKARD_VERSION-0.2.2}
     user: "65532:65532"
     restart: unless-stopped
     read_only: true
