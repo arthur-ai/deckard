@@ -1,12 +1,12 @@
 # Running Deckard with Docker Compose
 
 ```bash
-./scan-local.sh
-docker compose up -d --wait
+../start.sh
 ```
 
-Then open [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in
-Kibana and log in as `elastic`, password `changeme`. You need Docker Compose 2.24 or later.
+It runs `preflight.sh`, `scan-local.sh` and `docker compose up -d --wait`, waits for Deckard's
+first scan, and prints the agents found. Then open
+[Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana and log in as `elastic`, password `changeme`. You need Docker Compose 2.24 or later.
 
 Or have a coding agent do it, checks and all: paste it this line.
 
