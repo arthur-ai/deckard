@@ -1,0 +1,4 @@
+# Every text file checks out with LF line endings, on Windows too. Compose runs
+# elastic/setup.sh with sh inside a Linux container, and a CRLF checkout (Git for Windows'
+# default) breaks it before Deckard starts.
+* text=auto eol=lf

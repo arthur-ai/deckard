@@ -31,10 +31,15 @@ install_cmd() {
   esac
 }
 
+# Windows has its own scan, which a WSL2 shell would miss: it scans the Linux VM, not the
+# apps installed on Windows. Git Bash and MSYS2 report MINGW* or MSYS*.
 case "$os" in
   Darwin|Linux) check os PASS "$os $arch" ;;
+  MINGW*|MSYS*|CYGWIN*) check os FAIL "Windows: this setup is for macOS and Linux"
+     fix "From PowerShell in docker-compose: powershell -NoProfile -ExecutionPolicy Bypass -File .\\scan-local.ps1" \
+         "Then: docker compose up -d --wait (README.md, On Windows)" ;;
   *) check os FAIL "$os is not supported"
-     fix "Run this on macOS or Linux. On Windows, run it inside WSL2 with Docker Desktop's WSL integration turned on." ;;
+     fix "Run this on macOS or Linux, or scan-local.ps1 from PowerShell on Windows." ;;
 esac
 
 missing=""

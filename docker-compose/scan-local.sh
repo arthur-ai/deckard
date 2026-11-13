@@ -16,9 +16,9 @@ set -euo pipefail
 
 # The collector, pinned to the commit of the engine release Deckard runs, so it writes the
 # scan that release reads, and checked against these hashes. scripts/bump.sh moves all three.
-COLLECTOR_REF=abe8a9d0a9e3074a2adcbf77a8b2c950f8703f36
-COLLECT_SH_SHA256=5dfd696a61963e0b6bb33b73fd83d79114cf2a1b93f683e98c6388f09a956a8f
-COLLECT_LINUX_SH_SHA256=56a1c4d59d3fca0538ea27df0c4a283edba327107c77150314e8c881822eaddc
+COLLECTOR_REF=d52abc675a8758d30c3fa530eaf06556900cb529
+COLLECT_SH_SHA256=c1fa89e55f0b41249b2393b1dcb9903cf31f6c1fd77e3554b76624922afc6b5e
+COLLECT_LINUX_SH_SHA256=e08f1967fa8e370c98f07be737327d3b5e7f459ca98bfeadb62b64b21d2caa1b
 COLLECTOR_URL="https://raw.githubusercontent.com/arthur-ai/arthur-engine/${COLLECTOR_REF}/integrations/endpoint-ai-discovery/dist"
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -37,7 +37,7 @@ case "$(uname -s)" in
     collector=collect-linux.sh
     collector_sha256=$COLLECT_LINUX_SH_SHA256
     ;;
-  *) fail "$(uname -s) is not supported; the collector runs on macOS and Linux" ;;
+  *) fail "$(uname -s) is not supported; this script runs on macOS and Linux, and scan-local.ps1 on Windows" ;;
 esac
 
 # The places the collector looks for osquery, in its order.

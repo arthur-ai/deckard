@@ -7,7 +7,7 @@ x-elastic-image: &elastic-image docker.elastic.co/elasticsearch/elasticsearch:${
 
 services:
   deckard:
-    image: arthurplatform/deckard:${DECKARD_VERSION-0.2.1}
+    image: arthurplatform/deckard:${DECKARD_VERSION-0.2.2}
     user: "65532:65532"
     restart: unless-stopped
     read_only: true
@@ -26,7 +26,7 @@ services:
       - ./discovery.yaml:/etc/deckard/discovery.yaml:ro
       # Files the config reads with {file: secrets/...}, resolved beside the config.
       - ./secrets:/etc/deckard/secrets:ro
-      # This machine's scan, written by ./scan-local.sh, for the `local` source.
+      # This machine's scan, written by ./scan-local.sh (scan-local.ps1 on Windows), for the `local` source.
       - ./local-scan:/etc/deckard/local-scan:ro
     depends_on:
       # So the scan at startup has a user to send as.
