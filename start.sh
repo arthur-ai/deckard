@@ -17,9 +17,9 @@ cd "$(dirname "$0")/docker-compose"
 
 tty=0; [ -t 1 ] && tty=1
 if [ "$tty" = 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  bold=$'\e[1m' dim=$'\e[2m' green=$'\e[32m' red=$'\e[31m' yellow=$'\e[33m' reset=$'\e[0m'
+  bold=$'\e[1m' purple=$'\e[35m' dim=$'\e[2m' green=$'\e[32m' red=$'\e[31m' yellow=$'\e[33m' reset=$'\e[0m'
 else
-  bold='' dim='' green='' red='' yellow='' reset=''
+  bold='' purple='' dim='' green='' red='' yellow='' reset=''
 fi
 
 log="$(mktemp)"
@@ -57,7 +57,20 @@ show_log() { tail -n "${1:-20}" "$log" | sed 's/^/    /' >&2; }
 # The detail preflight printed for its passing check $1.
 passed() { awk -v c="$1" '$1 == "CHECK" && $2 == c && $3 == "PASS" { $1 = $2 = $3 = ""; sub(/^ +/, ""); print }' "$log"; }
 
-printf '\n%sDeckard%s %s· scanning %s%s\n\n' "$bold" "$reset" "$dim" "$(uname -n)" "$reset"
+# The owl from the Deckard logo, with the name and host beside its eyes.
+p="$purple" w="$bold" y="$yellow" r="$reset"
+cat <<EOF
+
+${p}  |\\__         __/|${r}
+${p}  |   \\_______/   |${r}
+${p}  |  ${w}.--.   .--.${r}${p}  |${r}
+${p}  | ${w}( () ) ( () )${r}${p} |${r}    ${bold}Deckard${reset}
+${p}  |  ${w}'--'${r} ${y}V${r} ${w}'--'${r}${p}  |${r}    ${dim}scanning $(uname -n)${reset}
+${p}   \\    v v v    /${r}
+${p}    \\    v v    /${r}
+${p}     '-._____.-'${r}
+
+EOF
 
 # 1. Preflight. On success, a summary; on failure, its failed checks and their fixes. Its
 #    INFO lines and anything else it printed besides passing checks show either way.
