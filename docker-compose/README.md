@@ -101,6 +101,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
   AppLocker or Windows Defender Application Control restricts unsigned scripts to
   PowerShell's ConstrainedLanguage mode, it runs unchanged: it and the collector use only
   what that mode allows.
+- Its last line says `degraded` on a machine with Docker installed, which running Deckard
+  needs. osquery reads no containers on Windows, and the collector says so rather than
+  report none. The rest of the scan is complete.
 - As with `scan-local.sh`, Deckard picks up a new scan at its next interval, or now with
   `docker compose restart deckard`.
 

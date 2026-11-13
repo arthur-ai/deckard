@@ -16,9 +16,9 @@ set -euo pipefail
 
 # The collector, pinned to the commit of the engine release Deckard runs, so it writes the
 # scan that release reads, and checked against these hashes. scripts/bump.sh moves all three.
-COLLECTOR_REF=18f7b03cb93c5ccbc0634c92e18701a70bf6716b
-COLLECT_SH_SHA256=9359ac5b3c26a94759a88c0228ddb63419371dfbb4d818e551b5f3420744a427
-COLLECT_LINUX_SH_SHA256=b607de38c53430361cf014d2ca19ece475a21d676ca70e904b0b6512872a5732
+COLLECTOR_REF=d52abc675a8758d30c3fa530eaf06556900cb529
+COLLECT_SH_SHA256=c1fa89e55f0b41249b2393b1dcb9903cf31f6c1fd77e3554b76624922afc6b5e
+COLLECT_LINUX_SH_SHA256=e08f1967fa8e370c98f07be737327d3b5e7f459ca98bfeadb62b64b21d2caa1b
 COLLECTOR_URL="https://raw.githubusercontent.com/arthur-ai/arthur-engine/${COLLECTOR_REF}/integrations/endpoint-ai-discovery/dist"
 
 here="$(cd "$(dirname "$0")" && pwd)"
