@@ -198,6 +198,14 @@ jobs:
             throw "machine.json does not name this Windows machine: $machine"
           }
           $rows | Group-Object kind | ForEach-Object { "$($_.Name)=$($_.Count)" }
+          # What only the collector writes: a status line, and a dated marker for each
+          # branch it ran. None may say error on a healthy machine.
+          $status = Get-Content -Raw (Join-Path $env:FOLDER 'status.txt')
+          if ($status -notmatch '^(ok|degraded) \S+ rows=\d+ ') { throw "status.txt is not the collector's status line: $status" }
+          $branches = @($rows | Where-Object { $_.kind -eq 'scan' })
+          if ($branches.Count -lt 5) { throw "the scan carries $($branches.Count) branch markers, so it is not the collector's" }
+          $failed = @($branches | Where-Object { $_.extra -eq 'error' } | ForEach-Object { $_.id })
+          if ($failed.Count) { throw "these branches could not look: $($failed -join ', ')" }
       - name: Scan under a Restricted execution policy, Windows 11's default
         run: |
           $ErrorActionPreference = 'Continue'
@@ -245,16 +253,21 @@ jobs:
           if ($code -eq 0) { throw 'scan-local.ps1 ran unsigned under an AllSigned Group Policy' }
           if ($out -notmatch 'not digitally signed') { throw "refused for another reason: $out" }
           exit 0
-      - name: A query that doesn't match its pin is refused, and the last scan kept
+      - name: A collector that doesn't match its pin is refused, and the last scan kept
         run: |
           $ErrorActionPreference = 'Continue'
           $inventory = Join-Path $env:FOLDER 'inventory.json'
           $before = (Get-FileHash $inventory).Hash
           $tampered = Join-Path $env:RUNNER_TEMP 'tampered.ps1'
-          $pin = '$$DiscoveryWindowsSqlSha256 = ''' + ('0' * 64) + ''''
-          (Get-Content $env:SCAN) -replace '^\$DiscoveryWindowsSqlSha256 = .*$', $pin | Set-Content $tampered
-          powershell -NoProfile -ExecutionPolicy Bypass -File $tampered $env:FOLDER
-          if ($LASTEXITCODE -eq 0) { throw 'ran a query that does not match its pin' }
+          $pin = '$$CollectWindowsPs1Sha256 = ''' + ('0' * 64) + ''''
+          (Get-Content $env:SCAN) -replace '^\$CollectWindowsPs1Sha256 = .*$', $pin | Set-Content $tampered
+          # A pin this did not replace would leave the real one, and the run would pass.
+          if (-not (Select-String -Path $tampered -Pattern ('0' * 64) -Quiet)) { throw 'the pin was not replaced' }
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File $tampered $env:FOLDER 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          if ($code -eq 0) { throw 'ran a collector that does not match its pin' }
+          if ($out -notmatch 'does not match its pinned hash') { throw 'the run failed for another reason than the pin' }
           if ((Get-FileHash $inventory).Hash -ne $before) { throw 'a refused run replaced the last scan' }
           exit 0
       - name: A scan osquery can't run fails, and the last scan is kept
@@ -275,7 +288,7 @@ jobs:
           Remove-Item Env:\OSQI
           if ($code -eq 0) { throw 'a failed osquery run reported success' }
           if ((Get-FileHash $inventory).Hash -ne $before) { throw 'a failed run replaced the last scan' }
-          if (Get-ChildItem -Force $env:FOLDER -Filter '.scan-*') { throw 'a failed run left its staging folder' }
+          if (Get-ChildItem -Force $env:FOLDER -Filter '.scan*') { throw 'a failed run left its staging folder' }
           exit 0
       - name: Scan as a standard user
         run: |

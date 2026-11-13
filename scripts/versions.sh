@@ -8,9 +8,9 @@
 #   ENGINE_VERSION   the Arthur Engine release this version of Deckard is
 #   ENGINE_DIGEST    that release's arthurplatform/ml-engine image, which releasing Deckard
 #                    publishes unchanged as arthurplatform/deckard:<DECKARD_VERSION>
-#   COLLECTOR_REF    the arthur-engine commit scan-local.sh runs the collector from, and
-#                    scan-local.ps1 the Windows query from: the engine release's own
-#                    commit, so the scan is what that release reads
+#   COLLECTOR_REF    the arthur-engine commit scan-local.sh and scan-local.ps1 run the
+#                    collector from: the engine release's own commit, so the scan is what
+#                    that release reads
 
 set -euo pipefail
 
@@ -42,7 +42,7 @@ collector_windows="$(sed -n "s|^\$CollectorRef = '\([^']*\)' *$|\1|p" "$scan_win
 [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "Chart.yaml arthur.ai/engine-digest '$digest' is not a digest"
 [[ "$collector" =~ ^[0-9a-f]{40}$ ]] || fail "scan-local.sh COLLECTOR_REF '$collector' is not a commit"
 [ "$collector_windows" = "$collector" ] \
-  || fail "scan-local.ps1 runs the query from '$collector_windows', not scan-local.sh's '$collector'"
+  || fail "scan-local.ps1 runs the collector from '$collector_windows', not scan-local.sh's '$collector'"
 
 echo "DECKARD_VERSION=$deckard"
 echo "ENGINE_VERSION=$engine"

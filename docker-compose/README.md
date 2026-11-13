@@ -78,10 +78,8 @@ mounts into Deckard:
 
 ### On Windows
 
-`scan-local.ps1` does the same from PowerShell. Arthur's collector doesn't run on Windows,
-so it runs [ai-detection-spec](https://github.com/arthur-ai/ai-detection-spec)'s Windows
-query through osquery itself, pinned and checked the same way, and writes the same two
-files:
+`scan-local.ps1` does the same from PowerShell. It downloads the collector's Windows
+build, pinned and checked the same way, runs it, and writes the same two files:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
@@ -101,8 +99,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
 - A machine whose IT allows signed scripts only (an `AllSigned` execution policy set by
   Group Policy) won't run it, and `-ExecutionPolicy Bypass` can't override that. Where
   AppLocker or Windows Defender Application Control restricts unsigned scripts to
-  PowerShell's ConstrainedLanguage mode, it runs unchanged: it uses only what that mode
-  allows.
+  PowerShell's ConstrainedLanguage mode, it runs unchanged: it and the collector use only
+  what that mode allows.
 - As with `scan-local.sh`, Deckard picks up a new scan at its next interval, or now with
   `docker compose restart deckard`.
 
@@ -154,8 +152,8 @@ when one fails, saying why in `outcome.error`. Deckard logs the same outcome:
 | `docker compose up` fails at `elastic-setup` | `docker compose logs elastic-setup` says why |
 
 `scan-local.sh` says so if osquery is missing, and prints the collector's own output if the
-scan fails. `scan-local.ps1` does the same with osquery's output, and also says if osquery
-is older than the Windows query needs.
+scan fails. `scan-local.ps1` does the same, and also says if osquery is older than the
+Windows scan needs.
 
 ## Notes
 

@@ -15,8 +15,8 @@ chart and Compose setup that run it. Merging a new version to `main` releases it
 
 [`charts/deckard/Chart.yaml`](charts/deckard/Chart.yaml) holds Deckard's version (`version`
 and `appVersion`, always equal) and the engine release it pins (`arthur.ai/engine-version`
-and `arthur.ai/engine-digest`). The Compose file's image tag, the collector `scan-local.sh`
-runs and the Windows query `scan-local.ps1` runs follow them.
+and `arthur.ai/engine-digest`). The Compose file's image tag and the collector
+`scan-local.sh` and `scan-local.ps1` run follow them.
 
 Change them with `scripts/bump.sh`, not by hand. CI checks that every file agrees
 (`scripts/versions.sh`) and that the pins are the engine release they name, then runs the

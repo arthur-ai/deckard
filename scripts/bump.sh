@@ -5,8 +5,8 @@
 #   scripts/bump.sh --deckard 0.2.0                      # a new version on the same engine
 #   scripts/bump.sh --engine 2.1.1060 --deckard 0.2.0
 #
-# Moving the engine pins its image digest and the collector scan-local.sh runs to that
-# release, together. Merging the change to main releases the new version
+# Moving the engine pins its image digest and the collector scan-local.sh and scan-local.ps1
+# run to that release, together. Merging the change to main releases the new version
 # (.github/workflows/release.yaml). Needs gh, docker with buildx, jq and curl.
 
 set -euo pipefail
@@ -64,8 +64,7 @@ if [ -n "$engine" ]; then
   tree="https://raw.githubusercontent.com/arthur-ai/arthur-engine/$commit/integrations/endpoint-ai-discovery"
   mac_sha256="$(curl -fsSL "$tree/dist/collect.sh" | sha256)"
   linux_sha256="$(curl -fsSL "$tree/dist/collect-linux.sh" | sha256)"
-  # Windows has no collector; scan-local.ps1 runs the vendored query itself.
-  windows_sha256="$(curl -fsSL "$tree/vendor/ai-detection-spec/dist/discovery-windows.sql" | sha256)"
+  windows_sha256="$(curl -fsSL "$tree/dist/collect-windows.ps1" | sha256)"
 
   set_after '  arthur.ai/engine-version: ' "\"$engine\"" "$chart"
   set_after '  arthur.ai/engine-digest: ' "$digest" "$chart"
@@ -75,7 +74,7 @@ if [ -n "$engine" ]; then
   # shellcheck disable=SC2016 # matching the literal PowerShell variable names in the file
   set_after '$CollectorRef = ' "'$commit'" "$scan_windows"
   # shellcheck disable=SC2016
-  set_after '$DiscoveryWindowsSqlSha256 = ' "'$windows_sha256'" "$scan_windows"
+  set_after '$CollectWindowsPs1Sha256 = ' "'$windows_sha256'" "$scan_windows"
 fi
 
 set_after 'version: ' "$deckard" "$chart"
