@@ -4,14 +4,14 @@ description: Arthur Deckard finds the AI agents running across your cloud, endpo
 type: application
 # Deckard's version, and the arthurplatform/deckard image tag the chart runs by default.
 # Change it with scripts/bump.sh; merging the change to main releases it.
-version: 0.2.1
-appVersion: "0.2.1"
+version: 0.2.2
+appVersion: "0.2.2"
 annotations:
   # The Arthur Engine release this version of Deckard is. Releasing Deckard publishes that
   # release's arthurplatform/ml-engine image, this digest unchanged, as
   # arthurplatform/deckard:<appVersion>.
-  arthur.ai/engine-version: "2.1.1070"
-  arthur.ai/engine-digest: sha256:dd94278f813a0cbd4c5d3e0ee57ed9ba097e6050388b5c0912f62295a4618b85
+  arthur.ai/engine-version: "2.1.1106"
+  arthur.ai/engine-digest: sha256:287236a6448a7c73e3dc090ded36225b363265e823568b8bd1a4ac169cb9d652
 home: https://github.com/arthur-ai/deckard
 sources:
   - https://github.com/arthur-ai/deckard
