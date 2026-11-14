@@ -4,7 +4,7 @@
 # Usage: ./start.sh
 #
 # Checks this machine (docker-compose/preflight.sh), scans it (docker-compose/scan-local.sh),
-# starts Deckard with Elasticsearch and Kibana beside it, waits for the scan to land, and
+# starts Deckard with Elasticsearch and its viewer beside it, waits for the scan to land, and
 # prints what it found. It installs nothing and never runs sudo: if a check fails, it stops
 # and prints the commands to run yourself. Run it again to rescan and refresh the results.
 #
@@ -104,21 +104,22 @@ ok "Scanned" "${elapsed}s"
 was_running="$(docker compose ps -q --status running deckard 2>/dev/null || true)"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 up() {
-  docker compose up -d --wait
+  # --remove-orphans: the Kibana an older checkout ran, which the viewer replaced.
+  docker compose up -d --wait --remove-orphans
   [ -z "$was_running" ] || docker compose restart deckard
 }
 first=""
-[ -n "$(docker compose images -q 2>/dev/null)" ] || first=" (the first start downloads about 2 GB)"
-run "Starting Deckard, Elasticsearch and Kibana$first" up
+[ -n "$(docker compose images -q 2>/dev/null)" ] || first=" (the first start downloads about 1.4 GB)"
+run "Starting Deckard, Elasticsearch and the viewer$first" up
 if [ "$status" -ne 0 ]; then
   bad "Deckard did not start"
   show_log
   docker compose ps -a --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null | sed 's/^/    /' >&2
   note "docker compose logs <service> (run in docker-compose/) says why." \
-       "Kibana can be slow on a first start: run ./start.sh again."
+       "Elasticsearch can be slow on a first start: run ./start.sh again."
   exit 1
 fi
-ok "Deckard running" "Elasticsearch + Kibana · ${elapsed}s"
+ok "Deckard running" "Elasticsearch + viewer · ${elapsed}s"
 
 # 4. Wait for the scan to reach Elasticsearch.
 # The password .env sets for elastic, if any, else the Compose file's default.
@@ -181,12 +182,10 @@ else
   ok "Scan published" "none of the AI agents in the catalog are on this machine"
 fi
 
-login="user elastic, password $( [ "$pw" = changeme ] && echo changeme || echo "ELASTIC_PASSWORD from docker-compose/.env" )"
 cat <<EOF
 
-${bold}Explore in Kibana${reset}  http://localhost:5601/app/discover#/view/deckard-findings
-                   ${dim}${login}${reset}
-${bold}Rescan${reset}             ./start.sh
-${bold}Add sources${reset}        cloud, MDM or SIEM: see docker-compose/README.md
+${bold}See them${reset}      http://localhost:7493
+${bold}Rescan${reset}        ./start.sh
+${bold}Add sources${reset}   cloud, MDM or SIEM: see docker-compose/README.md
 
 EOF

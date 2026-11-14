@@ -40,7 +40,7 @@ git clone https://github.com/arthur-ai/deckard.git
 cd deckard && ./start.sh
 ```
 
-`start.sh` checks your machine, scans it, starts Deckard with an Elasticsearch and Kibana
+`start.sh` checks your machine, scans it, starts Deckard with an Elasticsearch and a viewer
 beside it, waits for the scan to arrive, and prints the agents it found. It installs nothing
 and never runs `sudo`: if something is missing, it stops and prints the command to run
 yourself. The scan lists what's installed on this machine using the osquery queries from
@@ -52,7 +52,7 @@ Deckard · scanning my-laptop
 
 ✓ Machine ready      Docker 29.9.2 · 63 GB RAM · osquery 5.24.0
 ✓ Scanned            6s
-✓ Deckard running    Elasticsearch + Kibana · 8s
+✓ Deckard running    Elasticsearch + viewer · 8s
 ✓ Scan published     4 AI agents found
 
 AI agents on this machine
@@ -61,16 +61,16 @@ AI agents on this machine
   Hermes Agent  Personal agent  ~/.local/bin/hermes
   Pi            Coding agent    ~/.pi/
 
-Explore in Kibana  http://localhost:5601/app/discover#/view/deckard-findings
-                   user elastic, password changeme
-Rescan             ./start.sh
-Add sources        cloud, MDM or SIEM: see docker-compose/README.md
+See them      http://localhost:7493
+Rescan        ./start.sh
+Add sources   cloud, MDM or SIEM: see docker-compose/README.md
 ```
 
-Open [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana,
-log in as `elastic` with password `changeme`, and it lists every event Deckard sent: one per
-agent found and one per scan, over the last 30 days. Expand a row to see the whole event.
-Run `./start.sh` again to rescan.
+Open [localhost:7493](http://localhost:7493) to see every AI agent Deckard has found, where
+it is, when it was first and last seen, and whether the latest scan still reports it. The
+viewer also shows how each source's scans are going, and puts what needs attention at the top:
+new agents, failing scans, and cloud scopes or machines Deckard couldn't read. Click an agent
+for everything its source reported. Run `./start.sh` again to rescan.
 
 Next, add your cloud, MDM or SIEM sources to
 [`docker-compose/discovery.yaml`](docker-compose/discovery.yaml) (it has commented

@@ -1,5 +1,5 @@
 # Arthur Deckard config. Works as is: it scans this machine (after ./scan-local.sh) and
-# sends what it finds to the Elasticsearch beside it, to browse in Kibana.
+# sends what it finds to the Elasticsearch beside it, to see in the viewer at localhost:7493.
 #
 # Full reference: https://github.com/arthur-ai/arthur-engine/blob/main/ml-engine/docs/standalone-discovery.md
 #
@@ -83,9 +83,8 @@ sources:
   #       # At least the interval: devices that reported only in a gap are missed.
   #       lookback_window_seconds: 21600
 
-# Exactly one destination. This one is the Elasticsearch beside Deckard; browse what it
-# receives in Kibana: http://localhost:5601/app/discover#/view/deckard-findings (user
-# elastic, password changeme)
+# Exactly one destination. This one is the Elasticsearch beside Deckard; see what it
+# receives in the viewer: http://localhost:7493
 destination:
   type: elasticsearch
   url: http://elasticsearch:9200
