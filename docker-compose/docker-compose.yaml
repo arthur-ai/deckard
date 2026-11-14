@@ -1,7 +1,8 @@
 name: arthur-deckard
 
-# The password of the Elasticsearch beside Deckard: for `elastic` (you, in Kibana),
-# Kibana's own user and the `deckard` user the example config sends as. Set it in .env.
+# The password of the Elasticsearch beside Deckard: for `elastic` (you, with curl), the
+# `deckard` user the example config sends as, and the `deckard_viewer` user the viewer reads
+# as. Set it in .env.
 x-elastic-password: &elastic-password ${ELASTIC_PASSWORD:-changeme}
 x-elastic-image: &elastic-image docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-9.5.5}
 
@@ -32,17 +33,13 @@ services:
       # So the scan at startup has a user to send as.
       elastic-setup:
         condition: service_completed_successfully
-      # A one-shot nothing depends on fails `up --wait` once it exits, which a fast one
-      # does before Compose checks. Costs Deckard the ~30s Kibana takes to start.
-      kibana-setup:
-        condition: service_completed_successfully
     healthcheck:
       test: wget -qO - http://127.0.0.1:7492/health
       interval: 30s
       timeout: 5s
       retries: 5
 
-  # Where the example config sends events. Browse them in Kibana, below.
+  # Where the example config sends events. Browse them in the viewer, below.
   elasticsearch:
     image: *elastic-image
     restart: unless-stopped
@@ -72,49 +69,47 @@ services:
       timeout: 5s
       retries: 60
 
-  # http://localhost:5601/app/discover#/view/deckard-findings, as user elastic.
-  kibana:
-    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-9.5.5}
+  # http://localhost:7493: the AI agents Deckard found, and how its scans went. Plain Node
+  # running ./viewer, which reads Deckard's events from Elasticsearch over its REST API as
+  # a user that can only read them. Listens on this machine only, with no login.
+  viewer:
+    image: node:24.22.1-alpine
+    user: node
     restart: unless-stopped
+    read_only: true
+    working_dir: /viewer
+    command: ["node", "server.mjs"]
     environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-      ELASTICSEARCH_USERNAME: kibana_system
-      ELASTICSEARCH_PASSWORD: *elastic-password
-      TELEMETRY_OPTIN: "false"
+      # Or your own Elasticsearch, once Deckard sends there: set VIEWER_ES_URL and
+      # VIEWER_ES_API_KEY in .env (a key that can read logs-arthur.discovery-*).
+      ES_URL: ${VIEWER_ES_URL:-http://elasticsearch:9200}
+      ES_API_KEY: ${VIEWER_ES_API_KEY:-}
+      ES_USERNAME: deckard_viewer
+      ES_PASSWORD: *elastic-password
+    volumes:
+      - ./viewer:/viewer:ro
     ports:
-      - 127.0.0.1:5601:5601
+      - 127.0.0.1:7493:7493
     depends_on:
       elastic-setup:
         condition: service_completed_successfully
     healthcheck:
-      # Kibana redirects to its login page once it's ready.
-      test: curl -s -o /dev/null -w '%{http_code}' http://localhost:5601 | grep -q '^302$$'
+      # Up once Elasticsearch answers the viewer's user.
+      test: wget -qO /dev/null http://127.0.0.1:7493/api/health
       interval: 5s
       timeout: 5s
-      retries: 60
+      retries: 30
 
-  # One-shot: Deckard's least-privileged user, and Kibana's password.
+  # One-shot: the users Deckard sends as and the viewer reads as, each allowed only that.
   elastic-setup:
     image: *elastic-image
-    command: ["sh", "/setup/setup.sh", "elasticsearch"]
+    command: ["sh", "/setup/setup.sh"]
     environment:
       ELASTIC_PASSWORD: *elastic-password
     volumes:
       - ./elastic:/setup:ro
     depends_on:
       elasticsearch:
-        condition: service_healthy
-
-  # One-shot: the Kibana data view and the "Deckard findings" view of Deckard's events.
-  kibana-setup:
-    image: *elastic-image
-    command: ["sh", "/setup/setup.sh", "kibana"]
-    environment:
-      ELASTIC_PASSWORD: *elastic-password
-    volumes:
-      - ./elastic:/setup:ro
-    depends_on:
-      kibana:
         condition: service_healthy
 
 volumes:

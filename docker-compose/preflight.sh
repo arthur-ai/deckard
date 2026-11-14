@@ -123,7 +123,7 @@ EOF
 
   mib=$((mem / 1024 / 1024))
   memfix="Docker Desktop: Settings > Resources > Memory, 6 GB or more. Colima: colima stop && colima start --cpu 4 --memory 6. Linux: free memory on this machine."
-  if [ "$mib" -lt 3800 ]; then check memory FAIL "$mib MiB for Docker; Elasticsearch and Kibana need 4 GiB"; fix "$memfix"
+  if [ "$mib" -lt 3800 ]; then check memory FAIL "$mib MiB for Docker; Elasticsearch and Deckard need 4 GiB"; fix "$memfix"
   elif [ "$mib" -lt 5800 ]; then check memory WARN "$mib MiB for Docker; 6 GiB or more is better"
   else check memory PASS "$mib MiB"; fi
 
@@ -137,11 +137,11 @@ EOF
     # space is reserved. The Compose file turns its disk watermarks off for this demo.
     pct=$((100 - avail * 100 / size))
     diskfix="Free space at $root. docker system df shows Docker's own use; docker system prune removes stopped containers and unused images."
-    if [ "$gib" -lt 5 ]; then check disk FAIL "$gib GiB free at $root; the images and data need about 8 GiB"; fix "$diskfix"
-    elif [ "$gib" -lt 10 ]; then check disk WARN "$gib GiB free at $root ($pct% used); the first start downloads about 2 GB, 7 GB unpacked"
+    if [ "$gib" -lt 5 ]; then check disk FAIL "$gib GiB free at $root; the images and data need about 6 GiB"; fix "$diskfix"
+    elif [ "$gib" -lt 10 ]; then check disk WARN "$gib GiB free at $root ($pct% used); the first start downloads about 1.4 GB, 4.5 GB unpacked"
     else check disk PASS "$gib GiB free at $root ($pct% used by Elasticsearch's count)"; fi
   else
-    check disk INFO "inside Docker's VM, not measurable here: it needs about 8 GiB free"
+    check disk INFO "inside Docker's VM, not measurable here: it needs about 6 GiB free"
   fi
 fi
 
@@ -163,7 +163,7 @@ if command -v docker >/dev/null 2>&1; then
   fi
 fi
 
-for port in 9200 5601; do
+for port in 9200 7493; do
   curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$port"
   if [ $? -eq 7 ]; then
     check "port-$port" PASS "free"

@@ -59,7 +59,7 @@ cd <DECKARD_DIR>/docker-compose && ./preflight.sh
 ```
 
 It only reads. It checks the OS, the network, Docker (running, usable by this user, memory,
-disk), Docker Compose 2.24 or later, ports 9200 and 5601, osquery, and the machine ID.
+disk), Docker Compose 2.24 or later, ports 9200 and 7493, osquery, and the machine ID.
 
 - Last line `PREFLIGHT OK`: tell the user about any `WARN` line, and go on.
 - Last line `PREFLIGHT FAILED`: **[STOP]**. Show the user each `FAIL` line with the `FIX:`
@@ -83,16 +83,16 @@ osquery for about 10 seconds and writes `local-scan/`. It needs no root.
 | `the collector failed`, with its output | `permission denied` on other users' folders is normal. On macOS, a privacy prompt for osqueryi may be waiting: ask the user to allow it, then run this again. Anything else: **[STOP]** with the output |
 | `osquery is not installed`, `could not read this machine's id` | Phase 3 missed it: run `./preflight.sh` again |
 
-## Phase 5: Start Deckard, Elasticsearch and Kibana
+## Phase 5: Start Deckard, Elasticsearch and the viewer
 
-Use a command timeout of at least 15 minutes: the first run downloads about 2 GB of images.
+Use a command timeout of at least 15 minutes: the first run downloads about 1.4 GB of images.
 
 ```bash
-cd <DECKARD_DIR>/docker-compose && docker compose up -d --wait; docker compose ps -a --format 'table {{.Service}}\t{{.Status}}'
+cd <DECKARD_DIR>/docker-compose && docker compose up -d --wait --remove-orphans; docker compose ps -a --format 'table {{.Service}}\t{{.Status}}'
 ```
 
-**Success:** `deckard`, `elasticsearch` and `kibana` are `(healthy)`, and `elastic-setup` and
-`kibana-setup` are `Exited (0)`. Deckard scans once at startup, so its first events land
+**Success:** `deckard`, `elasticsearch` and `viewer` are `(healthy)`, and `elastic-setup` is
+`Exited (0)`. Deckard scans once at startup, so its first events land
 within about a minute.
 
 If it fails, find the first service that isn't, and read its log
@@ -101,14 +101,15 @@ If it fails, find the first service that isn't, and read its log
 | Symptom | Do this |
 |---|---|
 | `toomanyrequests` or `unauthorized` pulling from Docker Hub | **[STOP]**: the user runs `docker login` |
-| only `docker.elastic.co` can't be reached | Elastic publishes the same images on Docker Hub: `docker pull elasticsearch:9.5.5 && docker tag elasticsearch:9.5.5 docker.elastic.co/elasticsearch/elasticsearch:9.5.5`, the same for `kibana:9.5.5` and `docker.elastic.co/kibana/kibana:9.5.5` (use `ELASTIC_VERSION` from `.env` if it sets one), then run Phase 5 again |
+| only `docker.elastic.co` can't be reached | Elastic publishes the same images on Docker Hub: `docker pull elasticsearch:9.5.5 && docker tag elasticsearch:9.5.5 docker.elastic.co/elasticsearch/elasticsearch:9.5.5` (use `ELASTIC_VERSION` from `.env` if it sets one), then run Phase 5 again |
 | other pull errors, `i/o timeout`, `TLS handshake timeout` | **[STOP]**: a proxy or VPN; the user sets Docker's proxy settings |
 | `port is already allocated` | run `./preflight.sh` again and follow it |
 | `elasticsearch` log has `OutOfMemoryError`, or exit code 137 | **[STOP]**: Docker needs more memory (Docker Desktop: Settings > Resources > Memory, 6 GB) |
 | `elasticsearch` log has `AccessDeniedException` on its data | **[ASK USER]** "May I delete the local Deckard data with `docker compose down -v`?" If yes, run it, then Phase 5 again |
 | `elastic-setup` log says `refused ELASTIC_PASSWORD` | the stored data keeps an older password. **[ASK USER]** whether to delete the data as above, or to set that password as `ELASTIC_PASSWORD` in `.env` themselves (as for a secret, 8.3) |
 | `Permission denied` on `/setup/setup.sh` or `discovery.yaml` | run Phase 2's `chmod` line, then Phase 5 again |
-| `kibana` not healthy | it is slow on a first start: run Phase 5 once more |
+| `elasticsearch` not healthy | it is slow on a first start: run Phase 5 once more |
+| `viewer` not healthy | `docker compose logs --tail 20 viewer` says what Elasticsearch answered it; `refused the viewer's credentials` means `elastic-setup` didn't run: Phase 5 again |
 | `deckard` restarting | its log names the config problem: fix it (Phase 8) |
 
 If the same failure repeats, **[STOP]** with the log lines.
@@ -122,33 +123,30 @@ scan='event_type:\"arthur.discovery.scan_outcome\" AND source.name:\"this-machin
 for i in $(seq 1 60); do [ "$(count "$scan")" -gt 0 ] 2>/dev/null && break; sleep 5; done
 echo "successful scans: $(count "$scan AND outcome.succeeded:true") of $(count "$scan")"
 echo "agents found:     $(count 'event_type:\"arthur.discovery.agent\" AND source.name:\"this-machine\"')"
-curl -s -o /dev/null -w 'findings view:    HTTP %{http_code}\n' -u "elastic:$PW" 'http://localhost:5601/api/saved_objects/search/deckard-findings'
+curl -s -o /dev/null -w 'viewer:           HTTP %{http_code}\n' 'http://localhost:7493/api/overview'
 curl -s -u "elastic:$PW" 'http://localhost:9200/_query?format=txt' -H 'Content-Type: application/json' \
   -d '{"query": "FROM logs-arthur.discovery-* | WHERE event_type == \"arthur.discovery.agent\" | STATS last_reported = MAX(@timestamp) BY agent.name, source.name | SORT agent.name"}'
 ```
 
-**Success:** at least `1` successful scan, and `findings view: HTTP 200`. `agents found: 0`
+**Success:** at least `1` successful scan, and `viewer: HTTP 200`. `agents found: 0`
 after a successful scan is a real result: none of the agents in the catalog are installed.
 
 - `of 0` after five minutes: `docker compose logs --tail 50 deckard` names the problem.
 - No successful scan: `docker compose logs --no-log-prefix deckard | grep '"succeeded"' | tail -n 1`
   shows `error`. `machine.json does not exist` or a scan too old: run Phase 4, then
   `docker compose restart deckard`, and this phase again.
-- `findings view: HTTP 404`: `docker compose logs kibana-setup`, then Phase 5 again.
+- `viewer:` anything but `HTTP 200`: `docker compose logs --tail 20 viewer`, then Phase 5 again.
 
 ## Phase 7: Give the user the link
 
-Only after Phase 6 passed, print this with the agent list from Phase 6 (and the real password
-if it isn't `changeme`):
+Only after Phase 6 passed, print this with the agent list from Phase 6:
 
-> **Deckard is running.** Open http://localhost:5601/app/discover#/view/deckard-findings and
-> log in as **elastic**, password **changeme**. (Plain http://localhost:5601 opens on the same
-> view after login.)
+> **Deckard is running.** Open http://localhost:7493 to see the AI agents it found.
 >
-> **Deckard findings** lists every event Deckard sent over the last 30 days, newest first: one
-> `arthur.discovery.agent` per agent found, and one `arthur.discovery.scan_outcome` per scan
-> saying whether it succeeded. Expand a row to see the whole event. Type
-> `event_type : "arthur.discovery.agent"` in the search bar to see only the agents.
+> Each agent shows where it is, what kind it is, and when Deckard first and last saw it.
+> Click one for everything its source reported. **Needs attention**, at the top, lists new
+> agents and any scan that failed or couldn't see all of its scope, and the **Sources** tab
+> shows how each source's recent scans went.
 
 ## Phase 8: Connect a real source and destination
 
@@ -165,7 +163,8 @@ and destination. Ask one question at a time:
    **Prerequisites**; if they lack one, give them the link and offer to stop there.
 2. **[ASK USER]** "Keep scanning this machine too? (yes / no)". Default yes.
 3. **[ASK USER]** which destination, from its destination menu. Moving off the local
-   Elasticsearch means this Kibana gets nothing new.
+   Elasticsearch means the viewer gets nothing new, unless the new destination is an
+   Elasticsearch it can read (the `elasticsearch` card in integrations.md says how).
 
 ### 8.2 Back up the config
 
@@ -260,6 +259,7 @@ From `<DECKARD_DIR>/docker-compose`:
 
 | To | Run |
 |---|---|
+| See what Deckard found | open http://localhost:7493 |
 | See status | `docker compose ps -a` |
 | Read Deckard's log | `docker compose logs --tail 100 deckard` |
 | Rescan this machine now | `./scan-local.sh && docker compose restart deckard` |
