@@ -1,15 +1,19 @@
 # Running Deckard with Docker Compose
 
 ```bash
-./scan-local.sh
-docker compose up -d --wait
+../start.sh
 ```
 
-On Windows, scan with `powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1`
-instead ([On Windows](#on-windows)).
+It runs `preflight.sh`, `scan-local.sh` and `docker compose up -d --wait`, waits for Deckard's
+first scan, and prints the agents found. Then open
+[Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana and log in as `elastic`, password `changeme`. You need Docker Compose 2.24 or later.
 
-Then open [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in
-Kibana and log in as `elastic`, password `changeme`. You need Docker Compose 2.24 or later.
+On Windows, run the two steps yourself, from PowerShell ([On Windows](#on-windows)):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
+docker compose up -d --wait
+```
 
 Or, on macOS or Linux, have a coding agent do it, checks and all: paste it this line.
 

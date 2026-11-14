@@ -37,13 +37,53 @@ read first.
 
 ```bash
 git clone https://github.com/arthur-ai/deckard.git
-cd deckard/docker-compose
-./scan-local.sh
-docker compose up -d --wait
+cd deckard && ./start.sh
 ```
 
-On Windows, set up by hand: the coding agent's setup runs on macOS and Linux. You need
-Docker Desktop and osquery 5.17.0 or later (its `.msi` installer). From PowerShell:
+`start.sh` checks your machine, scans it, starts Deckard with an Elasticsearch and Kibana
+beside it, waits for the scan to arrive, and prints the agents it found. It installs nothing
+and never runs `sudo`: if something is missing, it stops and prints the command to run
+yourself. The scan lists what's installed on this machine using the osquery queries from
+[ai-detection-spec](https://github.com/arthur-ai/ai-detection-spec), our open format and
+catalog for finding AI agents on a machine. It changes nothing and doesn't need root.
+
+```text
+Deckard · scanning my-laptop
+
+✓ Machine ready      Docker 29.9.2 · 63 GB RAM · osquery 5.24.0
+✓ Scanned            6s
+✓ Deckard running    Elasticsearch + Kibana · 8s
+✓ Scan published     4 AI agents found
+
+AI agents on this machine
+  Claude Code   Coding agent    ~/.claude/
+  Codex CLI     Coding agent    ~/.codex/
+  Hermes Agent  Personal agent  ~/.local/bin/hermes
+  Pi            Coding agent    ~/.pi/
+
+Explore in Kibana  http://localhost:5601/app/discover#/view/deckard-findings
+                   user elastic, password changeme
+Rescan             ./start.sh
+Add sources        cloud, MDM or SIEM: see docker-compose/README.md
+```
+
+Open [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana,
+log in as `elastic` with password `changeme`, and it lists every event Deckard sent: one per
+agent found and one per scan, over the last 30 days. Expand a row to see the whole event.
+Run `./start.sh` again to rescan.
+
+Next, add your cloud, MDM or SIEM sources to
+[`docker-compose/discovery.yaml`](docker-compose/discovery.yaml) (it has commented
+examples), and point its `destination` at your own Elasticsearch, Splunk or webhook. Deckard
+reads the file only when its container starts, so apply each change with
+`docker compose up -d --force-recreate deckard`. See
+[`docker-compose/`](docker-compose/README.md) for more.
+
+### On Windows
+
+`start.sh` and the coding agent's setup run on macOS and Linux. On Windows, run the two
+steps yourself. You need Docker Desktop and osquery 5.17.0 or later (its `.msi` installer).
+From PowerShell:
 
 ```powershell
 git clone https://github.com/arthur-ai/deckard.git
@@ -52,38 +92,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
 docker compose up -d --wait
 ```
 
-`scan-local.sh` (`scan-local.ps1` on Windows) lists what's installed on this machine using
-the osquery queries from [ai-detection-spec](https://github.com/arthur-ai/ai-detection-spec),
-our open format and catalog for finding AI agents on a machine. It changes nothing and
-doesn't need root or an administrator.
-Deckard matches what it finds against that catalog and sends each agent to an
-Elasticsearch running beside it, within a minute of starting. Open
-[Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana, log
-in as `elastic` with password `changeme`, and it lists every event Deckard sent: one per
-agent found and one per scan, over the last 30 days. Expand a row to see the whole event.
-Or ask Elasticsearch from the terminal:
-
-```bash
-curl -s -u elastic:changeme 'localhost:9200/_query?format=txt' \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "FROM logs-arthur.discovery-* | WHERE event_type == \"arthur.discovery.agent\" | KEEP @timestamp, agent.name, source.name | SORT @timestamp DESC"}'
-```
-
-```text
-       @timestamp       |   agent.name   |  source.name
-------------------------+----------------+---------------
-2026-10-26T21:06:33.120Z|Claude Code     |this-machine
-2026-10-26T21:06:33.120Z|Claude Desktop  |this-machine
-2026-10-26T21:06:33.120Z|Cursor          |this-machine
-...
-```
-
-Next, add your cloud, MDM or SIEM sources to
-[`docker-compose/discovery.yaml`](docker-compose/discovery.yaml) (it has commented
-examples), and point its `destination` at your own Elasticsearch, Splunk or webhook. Deckard
-reads the file only when its container starts, so apply each change with
-`docker compose up -d --force-recreate deckard`. See
-[`docker-compose/`](docker-compose/README.md) for more.
+`scan-local.ps1` runs the same scan and doesn't need an administrator. Deckard sends what
+it found to Elasticsearch within a minute of starting: open
+[Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) as above. To
+rescan, run `scan-local.ps1` again, then `docker compose restart deckard`. See
+[On Windows](docker-compose/README.md#on-windows) for what the script needs.
 
 ## Deploy on Kubernetes
 
