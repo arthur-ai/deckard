@@ -61,16 +61,19 @@ AI agents on this machine
   Hermes Agent  Personal agent  ~/.local/bin/hermes
   Pi            Coding agent    ~/.pi/
 
-Explore in Kibana  http://localhost:5601/app/discover#/view/deckard-findings
+Explore in Kibana  http://localhost:5601/app/dashboards#/view/deckard-this-machine
                    user elastic, password changeme
 Rescan             ./start.sh
 Add sources        cloud, MDM or SIEM: see docker-compose/README.md
 ```
 
-Open [Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) in Kibana,
-log in as `elastic` with password `changeme`, and it lists every event Deckard sent: one per
-agent found and one per scan, over the last 30 days. Expand a row to see the whole event.
-Run `./start.sh` again to rescan.
+Open [Deckard: this machine](http://localhost:5601/app/dashboards#/view/deckard-this-machine)
+in Kibana and log in as `elastic` with password `changeme`. The dashboard shows the agents on
+this machine at a glance: what each one is, its version, how Deckard identified it and where
+it is installed, what was added or removed since the first scan, and how old the scan is.
+[Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) lists the events
+behind it, one per agent found and one per scan; expand a row to see the whole event. Run
+`./start.sh` again to rescan.
 
 Next, add your cloud, MDM or SIEM sources to
 [`docker-compose/discovery.yaml`](docker-compose/discovery.yaml) (it has commented

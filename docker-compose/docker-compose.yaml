@@ -72,7 +72,7 @@ services:
       timeout: 5s
       retries: 60
 
-  # http://localhost:5601/app/discover#/view/deckard-findings, as user elastic.
+  # http://localhost:5601/app/dashboards#/view/deckard-this-machine, as user elastic.
   kibana:
     image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-9.5.5}
     restart: unless-stopped
@@ -93,7 +93,8 @@ services:
       timeout: 5s
       retries: 60
 
-  # One-shot: Deckard's least-privileged user, and Kibana's password.
+  # One-shot: Deckard's least-privileged user, Kibana's password, and the mapping of the
+  # fields the dashboard reads.
   elastic-setup:
     image: *elastic-image
     command: ["sh", "/setup/setup.sh", "elasticsearch"]
@@ -105,7 +106,8 @@ services:
       elasticsearch:
         condition: service_healthy
 
-  # One-shot: the Kibana data view and the "Deckard findings" view of Deckard's events.
+  # One-shot: the Kibana data view, the "Deckard findings" list of Deckard's events, and the
+  # dashboards: "Deckard: this machine", which Kibana opens on, and "Deckard: all sources".
   kibana-setup:
     image: *elastic-image
     command: ["sh", "/setup/setup.sh", "kibana"]

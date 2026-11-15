@@ -49,7 +49,7 @@ git clone https://github.com/arthur-ai/deckard.git && cd deckard && pwd
 Then make the files the containers read readable to them (a strict umask can block it):
 
 ```bash
-cd <DECKARD_DIR>/docker-compose && chmod a+r discovery.yaml elastic/setup.sh && chmod a+rx elastic secrets local-scan && git -C <DECKARD_DIR> log -1 --format='%h %s'
+cd <DECKARD_DIR>/docker-compose && chmod a+r discovery.yaml elastic/* && chmod a+rx elastic secrets local-scan && git -C <DECKARD_DIR> log -1 --format='%h %s'
 ```
 
 ## Phase 3: Pre-flight
@@ -123,12 +123,17 @@ for i in $(seq 1 60); do [ "$(count "$scan")" -gt 0 ] 2>/dev/null && break; slee
 echo "successful scans: $(count "$scan AND outcome.succeeded:true") of $(count "$scan")"
 echo "agents found:     $(count 'event_type:\"arthur.discovery.agent\" AND source.name:\"this-machine\"')"
 curl -s -o /dev/null -w 'findings view:    HTTP %{http_code}\n' -u "elastic:$PW" 'http://localhost:5601/api/saved_objects/search/deckard-findings'
+curl -s -o /dev/null -w 'dashboard:        HTTP %{http_code}\n' -u "elastic:$PW" 'http://localhost:5601/api/saved_objects/dashboard/deckard-this-machine'
 curl -s -u "elastic:$PW" 'http://localhost:9200/_query?format=txt' -H 'Content-Type: application/json' \
   -d '{"query": "FROM logs-arthur.discovery-* | WHERE event_type == \"arthur.discovery.agent\" | STATS last_reported = MAX(@timestamp) BY agent.name, source.name | SORT agent.name"}'
 ```
 
 **Success:** at least `1` successful scan, and `findings view: HTTP 200`. `agents found: 0`
 after a successful scan is a real result: none of the agents in the catalog are installed.
+`dashboard: HTTP 200` means Deckard's dashboards are installed; on `HTTP 404`, Kibana
+opens on the findings view instead, so in Phase 7 give the user that link
+(http://localhost:5601/app/discover#/view/deckard-findings) and tell them
+`docker compose logs kibana-setup` says why.
 
 - `of 0` after five minutes: `docker compose logs --tail 50 deckard` names the problem.
 - No successful scan: `docker compose logs --no-log-prefix deckard | grep '"succeeded"' | tail -n 1`
@@ -141,14 +146,19 @@ after a successful scan is a real result: none of the agents in the catalog are 
 Only after Phase 6 passed, print this with the agent list from Phase 6 (and the real password
 if it isn't `changeme`):
 
-> **Deckard is running.** Open http://localhost:5601/app/discover#/view/deckard-findings and
+> **Deckard is running.** Open http://localhost:5601/app/dashboards#/view/deckard-this-machine and
 > log in as **elastic**, password **changeme**. (Plain http://localhost:5601 opens on the same
-> view after login.)
+> dashboard after login.)
 >
-> **Deckard findings** lists every event Deckard sent over the last 30 days, newest first: one
-> `arthur.discovery.agent` per agent found, and one `arthur.discovery.scan_outcome` per scan
-> saying whether it succeeded. Expand a row to see the whole event. Type
-> `event_type : "arthur.discovery.agent"` in the search bar to see only the agents.
+> **Deckard: this machine** shows the AI agents on this machine: what each one is, its
+> version, how Deckard identified it and where it is installed, what was added or removed
+> since the first scan, and how old the scan is. Deckard publishes the scan `scan-local.sh`
+> took; run `./start.sh` in the checkout to scan again.
+>
+> **Deckard findings** (http://localhost:5601/app/discover#/view/deckard-findings) lists the
+> events behind it over the last 30 days, newest first: one `arthur.discovery.agent` per agent
+> found, and one `arthur.discovery.scan_outcome` per scan saying whether it succeeded. Expand
+> a row to see the whole event.
 
 ## Phase 8: Connect a real source and destination
 

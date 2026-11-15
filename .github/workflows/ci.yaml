@@ -146,6 +146,33 @@ jobs:
           found "$scan AND outcome.succeeded:true" || { echo "::error::no successful scan"; exit 1; }
           found 'event_type:"arthur.discovery.agent" AND agent.name:"Claude Code"' \
             || { echo "::error::the scan did not report Claude Code"; exit 1; }
+      - name: The dashboards are installed and Kibana opens on this machine's
+        # setup.sh falls back to the findings view when Kibana refuses the dashboards, so that
+        # a changed ELASTIC_VERSION still starts. On the pinned version that is a failure.
+        run: |
+          for dashboard in deckard-this-machine deckard-all-sources; do
+            curl -fsS -o /dev/null -u elastic:changeme \
+              "http://127.0.0.1:5601/api/saved_objects/dashboard/$dashboard" \
+              || { echo "::error::Kibana has no $dashboard dashboard"; exit 1; }
+          done
+          curl -fsS -u elastic:changeme -H 'x-elastic-internal-origin: kibana' \
+            http://127.0.0.1:5601/internal/kibana/settings \
+            | jq -e '.settings.defaultRoute.userValue == "/app/dashboards#/view/deckard-this-machine"' >/dev/null \
+            || { echo "::error::Kibana does not open on the Deckard: this machine dashboard"; exit 1; }
+          # No scan has failed here, so only elastic/fields.json can have mapped this field.
+          curl -fsS -u elastic:changeme \
+            'http://127.0.0.1:9200/logs-arthur.discovery-*/_field_caps?fields=outcome.error' \
+            | jq -e '.fields["outcome.error"].keyword' >/dev/null \
+            || { echo "::error::the fields the dashboards read are not mapped"; exit 1; }
+          # The dashboards' ES|QL panels: each query must run on this Elasticsearch.
+          jq -r '.attributes.panelsJSON | fromjson | .[].embeddableConfig.attributes.state.query.esql // empty | @json' \
+            docker-compose/elastic/dashboards.ndjson \
+            | while read -r query; do
+                jq -n --argjson q "$query" '{query: $q}' \
+                  | curl -fsS -u elastic:changeme -H 'Content-Type: application/json' -d @- \
+                      http://127.0.0.1:9200/_query >/dev/null \
+                  || { echo "::error::a dashboard query does not run: $query"; exit 1; }
+              done
       - name: Logs
         if: always()
         working-directory: docker-compose

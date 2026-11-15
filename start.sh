@@ -184,7 +184,7 @@ fi
 login="user elastic, password $( [ "$pw" = changeme ] && echo changeme || echo "ELASTIC_PASSWORD from docker-compose/.env" )"
 cat <<EOF
 
-${bold}Explore in Kibana${reset}  http://localhost:5601/app/discover#/view/deckard-findings
+${bold}Explore in Kibana${reset}  http://localhost:5601/app/dashboards#/view/deckard-this-machine
                    ${dim}${login}${reset}
 ${bold}Rescan${reset}             ./start.sh
 ${bold}Add sources${reset}        cloud, MDM or SIEM: see docker-compose/README.md

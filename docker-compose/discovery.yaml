@@ -84,7 +84,7 @@ sources:
   #       lookback_window_seconds: 21600
 
 # Exactly one destination. This one is the Elasticsearch beside Deckard; browse what it
-# receives in Kibana: http://localhost:5601/app/discover#/view/deckard-findings (user
+# receives in Kibana: http://localhost:5601/app/dashboards#/view/deckard-this-machine (user
 # elastic, password changeme)
 destination:
   type: elasticsearch

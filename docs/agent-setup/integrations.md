@@ -299,6 +299,11 @@ destination:
 ```
 - **Verify:** in their Kibana, Discover in ES|QL mode:
   `FROM logs-arthur.discovery-* | WHERE event_type == "arthur.discovery.agent" | KEEP @timestamp, agent.name, source.name`
+- **Offer:** Deckard's dashboards for their Kibana ("Deckard: all sources", and "Deckard:
+  this machine" for a local scan). They import
+  `<DECKARD_DIR>/docker-compose/elastic/dashboards.ndjson` under Stack Management > Saved
+  Objects, and pick a data view over `logs-arthur.discovery-*` when it asks. They are built
+  for Kibana and Elasticsearch 9.5; on an older version some panels may not load.
 
 ### 2. `splunk_hec`
 - **Ask:** the HEC URL ending `/services/collector/event` (Splunk Cloud:
@@ -333,7 +338,9 @@ destination:
 
 ### 4. Keep the local Elasticsearch
 Leave `destination:` as it is. **Verify:** run prompt Phase 6 again, and check the new
-source appears in the Deckard findings view.
+source appears under "Scan health by source" on the "Deckard: all sources" dashboard
+(http://localhost:5601/app/dashboards#/view/deckard-all-sources). The dashboard Kibana opens
+on shows only the scan of this machine.
 
 ### 5. Rehearsal: a test webhook on this machine
 No credentials, and nothing new to download: a receiver runs from Deckard's own image on its
