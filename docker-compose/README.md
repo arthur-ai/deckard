@@ -96,6 +96,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
 - It doesn't need an administrator. Run as you, it sees what you can read. Windows lists
   the apps a user installed for themselves only while that user is signed in, so it finds
   yours, not those of other people on the machine who are signed out.
+- From an administrator PowerShell, the collector refuses to write into a folder that
+  other accounts can write in, and names them. A clone outside your user folder is usually
+  one. Run it from an ordinary PowerShell window instead.
 - `-ExecutionPolicy Bypass` lets Windows run this one script file this once, since by
   default it runs none. Nothing is changed for other scripts.
 - If you downloaded the repository as a ZIP rather than cloning it, Windows marks the file
