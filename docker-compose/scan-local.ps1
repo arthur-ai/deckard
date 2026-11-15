@@ -30,8 +30,8 @@ $ProgressPreference = 'SilentlyContinue'
 # The collector, pinned to the commit of the engine release Deckard runs, so it writes the
 # scan that release reads, and checked against this hash. scripts/bump.sh moves both, with
 # scan-local.sh's pins.
-$CollectorRef = '2f5fb4b4d4a1f05b2aca5f46cb006eed50d16381'
-$CollectWindowsPs1Sha256 = 'ec42f143b62b5c2c8816ae9c2d3cfff25ee9643e76ce81855d6e740eeebb2065'
+$CollectorRef = 'ade9324d1c1a67aba86eae167b254a041d1ee673'
+$CollectWindowsPs1Sha256 = '4b8c084de503961e8afb7e81284df71e1ee9e0ec5e558acef8efaac215ff2bd5'
 $CollectorUrl = "https://raw.githubusercontent.com/arthur-ai/arthur-engine/$CollectorRef/integrations/endpoint-ai-discovery/dist/collect-windows.ps1"
 
 # Below 5.17.0 osquery's programs table has no MSIX packages, so the scan would miss every
