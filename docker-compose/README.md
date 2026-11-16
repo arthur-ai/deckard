@@ -98,7 +98,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
   yours, not those of other people on the machine who are signed out.
 - From an administrator PowerShell, the collector refuses to write into a folder that
   other accounts can write in, and names them. A clone outside your user folder is usually
-  one. Run it from an ordinary PowerShell window instead.
+  one. Run it from an ordinary PowerShell window instead, or from a clone in your user
+  folder.
 - `-ExecutionPolicy Bypass` lets Windows run this one script file this once, since by
   default it runs none. Nothing is changed for other scripts.
 - If you downloaded the repository as a ZIP rather than cloning it, Windows marks the file

@@ -65,6 +65,12 @@ function Find-Osqueryi {
     return $null
 }
 
+# A 32-bit PowerShell on 64-bit Windows is shown another Program Files and another registry,
+# so it would find neither osquery nor this machine's id.
+if ($env:PROCESSOR_ARCHITEW6432) {
+    Fail 'this is a 32-bit PowerShell. Run the scan from a 64-bit one: "Windows PowerShell" in the Start menu, not "Windows PowerShell (x86)"'
+}
+
 $osqi = Find-Osqueryi
 if (-not $osqi) {
     Fail ("osquery is not installed. Install it, then run this again:`n" +
@@ -94,51 +100,61 @@ $Folder = (New-Item -ItemType Directory -Path $Folder -Force).FullName
 
 $work = Join-Path $env:TEMP "deckard-scan-$(Get-Random)"
 New-Item -ItemType Directory -Path $work | Out-Null
-$collector = Join-Path $work 'collect-windows.ps1'
-
-Write-Host 'Downloading the endpoint collector...'
+# The finally runs however this ends, Ctrl-C included, so the scratch folder never stays.
 try {
-    Invoke-WebRequest -UseBasicParsing -Uri $CollectorUrl -OutFile $collector
-} catch {
-    Fail "could not download the collector from ${CollectorUrl}: $($_.Exception.Message)"
-}
-if ((Get-FileHash -LiteralPath $collector -Algorithm SHA256).Hash -ne $CollectWindowsPs1Sha256) {
-    Fail 'the downloaded collector does not match its pinned hash; not running it'
-}
+    $collector = Join-Path $work 'collect-windows.ps1'
 
-Write-Host 'Scanning this machine (about 10 seconds)...'
-# The collector publishes into the folder only once its scan is good, so a failed run
-# leaves the previous scan in place. 6>&1 keeps what it says for a failure: it prints
-# through Write-Host.
-$savedOut = $env:ARTHUR_OUT_DIR
-$env:ARTHUR_OUT_DIR = $Folder
-$log = @()
-$code = 1
-try {
-    $log = @(& $collector 6>&1)
-    $code = $LASTEXITCODE
-} catch {
-    $log += "$($_.Exception.Message)"
+    Write-Host 'Downloading the endpoint collector...'
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $CollectorUrl -OutFile $collector
+    } catch {
+        Fail "could not download the collector from ${CollectorUrl}: $($_.Exception.Message)"
+    }
+    if ((Get-FileHash -LiteralPath $collector -Algorithm SHA256).Hash -ne $CollectWindowsPs1Sha256) {
+        Fail 'the downloaded collector does not match its pinned hash; not running it'
+    }
+
+    Write-Host 'Scanning this machine (about 10 seconds)...'
+    # The collector publishes into the folder only once its scan is good, so a failed run
+    # leaves the previous scan in place. 6>&1 keeps what it says for a failure: it prints
+    # through Write-Host. Kept line by line, so an error it does not catch loses none of it.
+    $savedOut = $env:ARTHUR_OUT_DIR
+    $env:ARTHUR_OUT_DIR = $Folder
+    $log = @()
+    $code = 1
+    try {
+        & $collector 6>&1 | ForEach-Object { $log += "$_" }
+        $code = $LASTEXITCODE
+    } catch {
+        $log += "$($_.Exception.Message)"
+    } finally {
+        $env:ARTHUR_OUT_DIR = $savedOut
+    }
+    if ($code -ne 0) {
+        $log | ForEach-Object { Write-Host "$_" }
+        Fail 'the collector failed; the folder still holds the previous scan, if any'
+    }
 } finally {
-    $env:ARTHUR_OUT_DIR = $savedOut
-}
-if ($code -ne 0) {
-    $log | ForEach-Object { Write-Host "$_" }
-    Fail 'the collector failed; the folder still holds the previous scan, if any'
+    Remove-Scratch
 }
 
 # A hashtable, not [pscustomobject]: ConstrainedLanguage refuses that conversion. Set-Content
-# writes UTF-8 with a byte order mark, which Deckard reads. Written beside the scratch files
-# and moved in whole.
-$machine = Join-Path $work 'machine.json'
-[ordered]@{
-    device_id  = $deviceId
-    hostname   = $env:COMPUTERNAME
-    platform   = 'windows'
-    os_version = $osVersion
-} | ConvertTo-Json | Set-Content -LiteralPath $machine -Encoding UTF8
-Move-Item -LiteralPath $machine -Destination (Join-Path $Folder 'machine.json') -Force
-Remove-Scratch
+# writes UTF-8 with a byte order mark, which Deckard reads. Written whole beside the file it
+# replaces, so the move is a rename and Deckard never reads half a file.
+$machine = Join-Path $Folder 'machine.json'
+$staged = "$machine.new"
+try {
+    [ordered]@{
+        device_id  = $deviceId
+        hostname   = $env:COMPUTERNAME
+        platform   = 'windows'
+        os_version = $osVersion
+    } | ConvertTo-Json | Set-Content -LiteralPath $staged -Encoding UTF8
+    Move-Item -LiteralPath $staged -Destination $machine -Force
+} catch {
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+    Fail "could not write ${machine}: $($_.Exception.Message)"
+}
 
 # The collector's status line: ok or degraded, a timestamp, the row count, then each branch.
 $status = @(Get-Content -LiteralPath (Join-Path $Folder 'status.txt') -TotalCount 1 -ErrorAction SilentlyContinue)

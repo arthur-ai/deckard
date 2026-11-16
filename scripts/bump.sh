@@ -64,7 +64,8 @@ if [ -n "$engine" ]; then
   tree="https://raw.githubusercontent.com/arthur-ai/arthur-engine/$commit/integrations/endpoint-ai-discovery"
   mac_sha256="$(curl -fsSL "$tree/dist/collect.sh" | sha256)"
   linux_sha256="$(curl -fsSL "$tree/dist/collect-linux.sh" | sha256)"
-  windows_sha256="$(curl -fsSL "$tree/dist/collect-windows.ps1" | sha256)"
+  windows_sha256="$(curl -fsSL "$tree/dist/collect-windows.ps1" | sha256)" \
+    || fail "arthur-engine $engine has no Windows collector for scan-local.ps1 to run; 2.1.1111 is the first with one"
 
   set_after '  arthur.ai/engine-version: ' "\"$engine\"" "$chart"
   set_after '  arthur.ai/engine-digest: ' "$digest" "$chart"

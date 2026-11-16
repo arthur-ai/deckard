@@ -228,6 +228,16 @@ jobs:
           if ($out -notmatch 'lets other accounts write in it') { throw 'the scan failed for another reason' }
           if (Get-ChildItem -Force $open) { throw 'a refused scan wrote into the folder' }
           exit 0
+      - name: A 32-bit PowerShell, which sees neither osquery nor the machine's id, is refused by name
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $x86 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+          $out = & $x86 -NoProfile -ExecutionPolicy Bypass -File $env:SCAN 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          if ($code -eq 0) { throw 'a 32-bit PowerShell scanned' }
+          if ($out -notmatch 'this is a 32-bit PowerShell') { throw 'the scan failed for another reason' }
+          exit 0
       - name: Scan under a Restricted execution policy, Windows 11's default
         run: |
           $ErrorActionPreference = 'Continue'
