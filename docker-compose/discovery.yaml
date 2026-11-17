@@ -1,5 +1,6 @@
-# Arthur Deckard config. Works as is: it scans this machine (after ./scan-local.sh) and
-# sends what it finds to the Elasticsearch beside it, to browse in Kibana.
+# Arthur Deckard config. Works as is: it scans this machine (after ./scan-local.sh, or
+# scan-local.ps1 on Windows) and sends what it finds to the Elasticsearch beside it, to
+# browse in Kibana.
 #
 # Full reference: https://github.com/arthur-ai/arthur-engine/blob/main/ml-engine/docs/standalone-discovery.md
 #
@@ -21,8 +22,8 @@ schedule:
   max_concurrent_scans: 2
 
 sources:
-  # This machine: the scan ./scan-local.sh writes to ./local-scan, mounted here. Deckard
-  # re-reads it every interval; run ./scan-local.sh again to refresh it.
+  # This machine: the scan ./scan-local.sh (scan-local.ps1 on Windows) writes to
+  # ./local-scan, mounted here. Deckard re-reads it every interval; scan again to refresh it.
   - name: this-machine
     vendor: local
     fields:

@@ -31,11 +31,27 @@ install_cmd() {
   esac
 }
 
+# Windows has its own scan, run from PowerShell. Git Bash and MSYS2 report MINGW* or MSYS*.
+# A WSL shell reports Linux, and scans its Linux distribution, not the apps installed on
+# Windows; its kernel release names Microsoft.
 case "$os" in
-  Darwin|Linux) check os PASS "$os $arch" ;;
+  Darwin) check os PASS "$os $arch" ;;
+  Linux)
+    case "$(uname -r)" in
+      *[Mm]icrosoft*) check os WARN "Linux under WSL: this scans the Linux distribution only. For the apps installed on Windows, run scan-local.ps1 from PowerShell (README.md, On Windows)" ;;
+      *) check os PASS "$os $arch" ;;
+    esac ;;
+  MINGW*|MSYS*|CYGWIN*) check os FAIL "Windows: this setup is for macOS and Linux"
+     fix "From PowerShell in docker-compose: powershell -NoProfile -ExecutionPolicy Bypass -File .\\scan-local.ps1" \
+         "Then: docker compose up -d --wait (README.md, On Windows)" ;;
   *) check os FAIL "$os is not supported"
-     fix "Run this on macOS or Linux. On Windows, run it inside WSL2 with Docker Desktop's WSL integration turned on." ;;
+     fix "Run this on macOS or Linux, or scan-local.ps1 from PowerShell on Windows." ;;
 esac
+# The checks below are for macOS and Linux: anywhere else their fixes would only mislead.
+if [ "$failed" -ne 0 ]; then
+  echo "PREFLIGHT FAILED: $failed check(s). The rest are for macOS and Linux, so they were not run."
+  exit 1
+fi
 
 missing=""
 for tool in git curl tar; do command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"; done

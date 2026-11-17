@@ -48,7 +48,7 @@ of your AI workloads instead of a sliver of each.
 | Endpoints and servers | Jamf Pro | `jamf_pro` | The endpoint collector's inventory on each managed Mac |
 | | Google Cloud Compute Engine | `gcp_compute_engine` | The same, on VMs across projects, folders or an organization |
 | | AWS EC2 | `aws_ec2` | The same, on instances across regions and accounts, through SSM |
-| | This machine | `local` | The same, on the machine running Deckard, from a folder `scan-local.sh` writes. Docker Compose only |
+| | This machine | `local` | The same, on the machine running Deckard, from a folder `scan-local.sh` (`scan-local.ps1` on Windows) writes. Docker Compose only |
 | Network and gateway logs | AWS CloudWatch Logs | `aws_network` | Route 53 Resolver query logs, VPC flow logs, or your own format |
 | | Google Cloud Logging | `gcp_network` | Cloud DNS query logs and VPC flow logs |
 | Security telemetry | Splunk Enterprise | `splunk_enterprise` | Your SPL search |

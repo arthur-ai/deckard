@@ -79,6 +79,25 @@ reads the file only when its container starts, so apply each change with
 `docker compose up -d --force-recreate deckard`. See
 [`docker-compose/`](docker-compose/README.md) for more.
 
+### On Windows
+
+`start.sh` and the coding agent's setup run on macOS and Linux. On Windows, run the two
+steps yourself. You need Docker Desktop and osquery 5.17.0 or later (its `.msi` installer).
+From PowerShell:
+
+```powershell
+git clone https://github.com/arthur-ai/deckard.git
+cd deckard\docker-compose
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
+docker compose up -d --wait
+```
+
+`scan-local.ps1` runs the same scan and doesn't need an administrator. Deckard sends what
+it found to Elasticsearch within a minute of starting: open
+[Deckard findings](http://localhost:5601/app/discover#/view/deckard-findings) as above. To
+rescan, run `scan-local.ps1` again, then `docker compose restart deckard`. See
+[On Windows](docker-compose/README.md#on-windows) for what the script needs.
+
 ## Deploy on Kubernetes
 
 ```bash
@@ -100,7 +119,7 @@ Each [release](https://github.com/arthur-ai/deckard/releases) publishes the imag
 | Class | Sources |
 |---|---|
 | Cloud AI platforms and workloads | Vertex AI Agent Engine, AWS Bedrock and AgentCore, Cloud Run and GKE, ECS and EKS, Vercel |
-| Endpoints and servers | Jamf Pro, Google Compute Engine, AWS EC2, this machine (`scan-local.sh`) |
+| Endpoints and servers | Jamf Pro, Google Compute Engine, AWS EC2, this machine (`scan-local.sh`, or `scan-local.ps1` on Windows) |
 | Network and gateway logs | AWS CloudWatch Logs, Google Cloud Logging |
 | Security telemetry | Splunk Enterprise, Elastic Security |
 
