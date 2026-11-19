@@ -3,6 +3,11 @@
 // It reads Deckard's events the way Kibana did: over Elasticsearch's REST API, server side,
 // as a user that can only read logs-arthur.discovery-*. The browser never talks to
 // Elasticsearch, and can ask only the questions below.
+//
+// It also asks Deckard itself, over Deckard's control API, where each scan stands and to
+// scan a source now. That API takes nothing else.
+
+import { readFileSync } from "node:fs";
 
 const AGENT = "arthur.discovery.agent";
 const OUTCOME = "arthur.discovery.scan_outcome";
@@ -25,6 +30,13 @@ export function config(env = process.env) {
     index: env.ES_INDEX || "logs-arthur.discovery-*",
     port: Number(env.PORT || 7493),
     host: env.HOST || "0.0.0.0",
+    // Deckard's control API, which takes "scan this source now". Off without both.
+    deckardUrl: (env.DECKARD_URL || "").replace(/\/+$/, "") || null,
+    deckardToken: env.DECKARD_CONTROL_TOKEN || null,
+    deckardTokenFile: env.DECKARD_CONTROL_TOKEN_FILE || null,
+    // Host names the page may be loaded as, beyond this machine's own. A request naming
+    // any other is refused, so a site that points its name at 127.0.0.1 can't read it.
+    allowedHosts: (env.ALLOWED_HOSTS || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean),
   };
 }
 
@@ -317,4 +329,86 @@ export async function sightings(cfg, sourceId, externalId, call = es) {
     total: res.hits?.total?.value ?? 0,
     times: (res.hits?.hits ?? []).map((h) => h.fields?.["@timestamp"]?.[0]).filter(Boolean),
   };
+}
+
+/* Deckard's control API */
+
+export class DeckardError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// The token, read from its file on every call: the file is written by a one-shot service
+// that may finish after the viewer starts, and may be replaced by a later one.
+function deckardToken(cfg) {
+  if (cfg.deckardToken) return cfg.deckardToken;
+  if (!cfg.deckardTokenFile) return null;
+  try {
+    return readFileSync(cfg.deckardTokenFile, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// Calls Deckard's control API and returns its parsed answer, or throws a DeckardError that
+// says what went wrong.
+export async function deckard(cfg, method, path, body, fetchImpl = fetch) {
+  const token = deckardToken(cfg);
+  if (!cfg.deckardUrl || !token) {
+    throw new DeckardError("The viewer isn't set up to ask Deckard for scans: it needs DECKARD_URL and a control token", 503);
+  }
+  let res;
+  try {
+    res = await fetchImpl(`${cfg.deckardUrl}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err) {
+    throw new DeckardError(
+      `Deckard at ${cfg.deckardUrl} can't be reached (${err.cause?.code || err.message}). It may be restarting, or a Deckard release that takes no scan requests yet`,
+      502,
+    );
+  }
+  let json = null;
+  try {
+    json = JSON.parse(await res.text());
+  } catch {
+    // Not JSON: not Deckard's control API.
+  }
+  if (res.status === 401) throw new DeckardError("Deckard refused the viewer's control token; the two were given different tokens", 502);
+  if (res.status === 404 && path === "/scans/run") {
+    throw new DeckardError("Deckard has no scan configured for that source any more; refresh the page", 404);
+  }
+  if (!res.ok || !json) throw new DeckardError(`Deckard answered ${res.status}${json?.error ? `: ${json.error}` : ""}`, 502);
+  return json;
+}
+
+// Where each of Deckard's configured scans stands. Never throws: a Deckard that can't be
+// asked is a page without scan buttons, not a broken page.
+export async function scans(cfg, call = deckard) {
+  try {
+    const res = await call(cfg, "GET", "/scans");
+    return { available: true, scans: Array.isArray(res.scans) ? res.scans : [] };
+  } catch (err) {
+    if (!(err instanceof DeckardError)) throw err;
+    return { available: false, reason: err.message, scans: [] };
+  }
+}
+
+const ID_MAX = 200;
+
+// Asks Deckard to scan one source's config now.
+export async function requestScan(cfg, body, call = deckard) {
+  const sourceId = body?.source_id;
+  const configName = body?.config_name;
+  const ok = (v) => typeof v === "string" && v.length > 0 && v.length <= ID_MAX;
+  if (!ok(sourceId) || (configName != null && !ok(configName))) {
+    throw new DeckardError("source_id is required, and config_name if given must be a short string", 400);
+  }
+  const res = await call(cfg, "POST", "/scans/run", { source_id: sourceId, ...(configName != null ? { config_name: configName } : {}) });
+  return { scans: Array.isArray(res.scans) ? res.scans : [] };
 }
