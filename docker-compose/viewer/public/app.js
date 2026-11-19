@@ -128,23 +128,41 @@ const RUNS_ON = { aws: "AWS", gcp: "GCP", azure: "Azure", endpoint: "Endpoint", 
 const keyOf = (id, config) => `${id}\u0000${config ?? ""}`;
 const scanOf = (s) => state.scans.list.find((x) => keyOf(x.source_id, x.config_name) === s.key);
 const sourceLabel = (s) => (s.config_name ? `${s.name} / ${s.config_name}` : s.name);
-const isCurrent = (a) => a.status !== "gone";
+// Whether a source ({id, name}) is still configured: in discovery.yaml, or else among the
+// scans Deckard runs. Without either to ask, as with a viewer reading another
+// Elasticsearch, every source counts as configured.
+function isConfigured(src) {
+  if (state.srcs?.sources) return state.srcs.sources.some((y) => y.name === src.name);
+  if (state.scans.available) return state.scans.list.some((x) => x.source_id === src.id);
+  return true;
+}
+
+// An agent's status, with every agent of a removed source no longer reported: nothing
+// scans for it any more. Elasticsearch's answer can't know that, so the page decides it.
+const removedSource = (a) => !isConfigured(a.source);
+const statusOf = (a) => (removedSource(a) ? "gone" : a.status);
+const isCurrent = (a) => statusOf(a) !== "gone";
 
 function statusBadges(a) {
   const out = [];
-  if (a.status === "gone") out.push(h("span", { class: "badge", title: "Its source scanned successfully since, and didn't report it" }, "No longer reported"));
-  if (a.status === "unknown") out.push(h("span", { class: "badge warn", title: "No successful scan outcome to compare against" }, "Status unknown"));
-  if (a.is_new && a.status !== "gone") out.push(h("span", { class: "badge new", title: `First seen ${exact(a.first_seen)}` }, "New"));
+  const status = statusOf(a);
+  if (status === "gone") {
+    const title = removedSource(a) ? "Its source was removed, so nothing scans for it" : "Its source scanned successfully since, and didn't report it";
+    out.push(h("span", { class: "badge", title }, "No longer reported"));
+  }
+  if (status === "unknown") out.push(h("span", { class: "badge warn", title: "No successful scan outcome to compare against" }, "Status unknown"));
+  if (a.is_new && status !== "gone") out.push(h("span", { class: "badge new", title: `First seen ${exact(a.first_seen)}` }, "New"));
   return out;
 }
 
 /* Rendering */
 
 function renderStats() {
-  const { agents, sources } = state.data;
+  const { agents } = state.data;
+  const sources = configuredSources();
   const current = agents.filter(isCurrent).length;
   const fresh = agents.filter((a) => a.is_new && isCurrent(a)).length;
-  const gone = agents.filter((a) => a.status === "gone").length;
+  const gone = agents.filter((a) => statusOf(a) === "gone").length;
   const failing = sources.filter((s) => s.last_scan?.succeeded === false).length;
   const coverage = sources.map((s) => s.last_scan?.device_coverage).filter(Boolean);
   const unreadable = coverage.reduce((n, c) => n + (c.devices_unreadable ?? 0), 0);
@@ -162,7 +180,8 @@ function renderStats() {
 }
 
 function renderAttention() {
-  const { agents, sources } = state.data;
+  const { agents } = state.data;
+  const sources = configuredSources();
   const items = [];
   const goSource = () => setTab("sources");
 
@@ -236,7 +255,7 @@ function sortValue(a, key) {
 function visibleAgents() {
   const q = state.q.trim().toLowerCase();
   return state.data.agents
-    .filter((a) => state.status === "all" || (state.status === "gone" ? a.status === "gone" : isCurrent(a)))
+    .filter((a) => state.status === "all" || (state.status === "gone" ? statusOf(a) === "gone" : isCurrent(a)))
     .filter((a) => !state.kind || facts(a).kind === state.kind)
     .filter((a) => !state.source || a.source.id === state.source)
     .filter((a) => {
@@ -261,7 +280,7 @@ function renderAgents() {
   fill($("agents-body"), ...rows.map((a) => {
     const f = facts(a);
     return h("tr", {
-      class: a.status === "gone" ? "gone" : "",
+      class: statusOf(a) === "gone" ? "gone" : "",
       tabindex: "0",
       onclick: () => openAgent(a.key),
       onkeydown: (e) => { if (e.key === "Enter") openAgent(a.key); },
@@ -331,9 +350,17 @@ async function askScan(s) {
   }
 }
 
-// Every source with events, then every scan Deckard has configured that hasn't sent any.
+// The sources with events that are still configured. A source removed from discovery.yaml
+// keeps its scans in Elasticsearch, but isn't a source any more. Without discovery.yaml or
+// Deckard to ask, as with a viewer reading another Elasticsearch, every source with events.
+function configuredSources() {
+  return state.data.sources.filter(isConfigured);
+}
+
+// Every configured source with events, then every scan Deckard has configured that hasn't
+// sent any, then every source in discovery.yaml that Deckard hasn't loaded yet.
 function sourceList() {
-  const { sources } = state.data;
+  const sources = configuredSources();
   const known = new Set(sources.map((s) => s.key));
   const unseen = state.scans.list
     .filter((x) => !known.has(keyOf(x.source_id, x.config_name)))
@@ -350,7 +377,25 @@ function sourceList() {
       recent: [],
       unseen: true,
     }));
-  return [...sources, ...unseen];
+  // Then every source in discovery.yaml that Deckard hasn't loaded yet: saved, but not
+  // applied, as when Deckard couldn't be asked to apply it and will at its next check.
+  const named = new Set([...sources, ...unseen].map((s) => s.name));
+  const pending = (state.srcs?.sources ?? [])
+    .filter((y) => !named.has(y.name))
+    .flatMap((y) => (y.configs.length ? y.configs : [{ name: null }]).map((c) => ({
+      key: `pending\u0000${y.name}\u0000${c.name ?? ""}`,
+      id: null,
+      name: y.name,
+      vendor: y.vendor,
+      config_name: c.name,
+      scans: 0,
+      failed_scans: 0,
+      last_scan: null,
+      last_success_at: null,
+      recent: [],
+      pending: true,
+    })));
+  return [...sources, ...unseen, ...pending];
 }
 
 function renderSources() {
@@ -373,7 +418,8 @@ function renderSources() {
     const scanError = state.scanErrors.get(s.key);
     const agentsHere = state.data.agents.filter((a) => a.source.id === s.id && a.source.config_name === s.config_name && isCurrent(a)).length;
     let pill;
-    if (s.unseen) pill = h("span", { class: "badge" }, "Not scanned yet");
+    if (s.pending) pill = h("span", { class: "badge", title: "Saved in discovery.yaml; Deckard starts scanning it within a few seconds" }, "Starting…");
+    else if (s.unseen) pill = h("span", { class: "badge" }, ACTIVE.has(scan?.status) ? "First scan" : "Not scanned yet");
     else if (!ls) pill = h("span", { class: "badge", title: "This source sends no scan outcomes: set emit_scan_outcomes: true" }, "No scan outcomes");
     else if (ls.succeeded) pill = h("span", { class: "badge ok" }, "Scanning fine");
     else pill = h("span", { class: "badge bad" }, "Last scan failed");
@@ -554,6 +600,9 @@ async function loadSources() {
   } catch (err) {
     state.srcs = { error: err.message };
   }
+  // Which sources are configured decides what the stats and Needs attention count, and
+  // which agents are no longer reported, too.
+  if (state.data) { renderStats(); renderAttention(); renderAgents(); }
   renderSources();
 }
 
@@ -757,31 +806,56 @@ function runTest() {
   });
 }
 
-// After a change: Deckard reloads discovery.yaml within about 5 s. Look again then, and
-// at its scans, so the page shows the new source scanning (or why it can't).
-function afterChange(message) {
+// After a change. The answer carries Deckard's scans as they stand once it applied the
+// file, so a new source is on the page, scanning, straight away; its outcome reloads the
+// page when it ends. A Deckard that couldn't be asked applies the file within about 5 s:
+// keep asking where its scans stand until it has.
+function afterChange(message, out, name) {
   closeEditor();
   showToast(message);
+  if (out?.hash && state.srcs) state.srcs.hash = out.hash;
+  if (out?.deckard && state.srcs) state.srcs.deckard = out.deckard;
+  if (out?.scans) state.scans = { available: true, reason: null, list: out.scans };
   loadSources();
-  setTimeout(() => { loadSources(); loadScans(); }, 7000);
-  setTimeout(load, 15000);
+  render();
+  if (out?.scans) pollScans();
+  else if (name) awaitSource(name);
+}
+
+const AWAIT_SOURCE_MS = 1_000;
+const AWAIT_SOURCE_TRIES = 15;
+
+async function awaitSource(name, tries = AWAIT_SOURCE_TRIES) {
+  await loadScans();
+  if (tries > 1 && !state.scans.list.some((x) => x.source_name === name)) {
+    setTimeout(() => awaitSource(name, tries - 1), AWAIT_SOURCE_MS);
+  }
 }
 
 function saveEditor() {
   return busy("save", async (e) => {
     const source = formSource();
-    if (e.editing) await post("/api/sources/update", { base_hash: state.srcs.hash, name: e.editing, source });
-    else await post("/api/sources/add", { base_hash: state.srcs.hash, source });
-    afterChange(e.editing ? `Saved ${e.editing}. Deckard applies the change within a few seconds.` : `Added ${source.name}. Deckard starts scanning it within a few seconds.`);
+    const out = e.editing
+      ? await post("/api/sources/update", { base_hash: state.srcs.hash, name: e.editing, source })
+      : await post("/api/sources/add", { base_hash: state.srcs.hash, source });
+    const started = out.scans?.some((x) => x.source_name === source.name && ACTIVE.has(x.status));
+    afterChange(
+      e.editing
+        ? `Saved ${e.editing}.${started ? " Scanning it with the change." : ""}`
+        : started ? `Added ${source.name}. Scanning it now.` : `Added ${source.name}. Deckard starts scanning it within a few seconds.`,
+      out,
+      source.name,
+    );
   });
 }
 
 function removeEditing() {
   const e = state.editor;
-  if (!confirm(`Remove ${e.editing} from discovery.yaml? Deckard stops scanning it. What it already found stays in Elasticsearch.`)) return;
+  if (!confirm(`Remove ${e.editing} from discovery.yaml? Deckard stops scanning it, and the agents it found move to No longer reported. Its events stay in Elasticsearch.`)) return;
   return busy("remove", async () => {
-    await post("/api/sources/remove", { base_hash: state.srcs.hash, name: e.editing });
-    afterChange(`Removed ${e.editing}.`);
+    const out = await post("/api/sources/remove", { base_hash: state.srcs.hash, name: e.editing });
+    state.srcs.sources = state.srcs.sources.filter((y) => y.name !== e.editing);
+    afterChange(`Removed ${e.editing}.`, out);
   });
 }
 

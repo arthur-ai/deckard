@@ -5,7 +5,10 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer, request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
-import { config, deckard, DeckardError, requestScan, scans } from "../lib.mjs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyConfig, config, deckard, DeckardError, requestScan, scans } from "../lib.mjs";
 
 const TOKEN = "t".repeat(64);
 
@@ -63,23 +66,38 @@ test("requestScan() passes on only a source and config", async () => {
   assert.equal(sent.length, 2);
 });
 
-// The real server, with a fake Deckard behind it.
-async function withServer(fn) {
+const waiting = () => ({ scans: [{ source_id: "s", config_name: "c", status: "waiting" }] });
+
+test("applyConfig() asks Deckard to apply the file, and answers null if it can't", async () => {
+  const cfg = config({});
+  const sent = [];
+  const now = await applyConfig(cfg, async (c, method, path) => {
+    sent.push([method, path]);
+    return { config: { error: null }, scans: [{ source_name: "new", status: "running" }] };
+  });
+  assert.deepEqual(sent, [["POST", "/config/reload"]]);
+  assert.equal(now.scans[0].status, "running");
+  assert.equal(await applyConfig(cfg, async () => { throw new DeckardError("Deckard answered 404", 502); }), null);
+});
+
+// The real server, with a fake Deckard behind it that answers each path with answer(path).
+async function withServer(fn, { env = {}, answer = waiting } = {}) {
   const asked = [];
   const fake = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
       asked.push({ path: req.url, auth: req.headers.authorization, body });
-      res.writeHead(req.url === "/scans/run" ? 202 : 200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ scans: [{ source_id: "s", config_name: "c", status: "waiting" }] }));
+      const out = answer(req.url);
+      res.writeHead(out ? (req.url === "/scans/run" ? 202 : 200) : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out ?? { error: "not found" }));
     });
   });
   await new Promise((r) => fake.listen(0, "127.0.0.1", r));
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, ["server.mjs"], {
     cwd: new URL("..", import.meta.url).pathname,
-    env: { PORT: String(port), HOST: "127.0.0.1", ES_URL: "http://127.0.0.1:9", DECKARD_URL: `http://127.0.0.1:${fake.address().port}`, DECKARD_CONTROL_TOKEN: TOKEN },
+    env: { PORT: String(port), HOST: "127.0.0.1", ES_URL: "http://127.0.0.1:9", DECKARD_URL: `http://127.0.0.1:${fake.address().port}`, DECKARD_CONTROL_TOKEN: TOKEN, ...env },
     stdio: ["ignore", "pipe", "inherit"],
   });
   await new Promise((r) => child.stdout.once("data", r));
@@ -145,4 +163,66 @@ test("the server asks Deckard only for a request from its own page", async () =>
     assert.equal(off.status, 503);
     assert.match(off.text, /SOURCES_CONFIG/);
   });
+});
+
+test("adding a source has Deckard apply it at once, and answers with it scanning", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "viewer-"));
+  const file = join(dir, "discovery.yaml");
+  writeFileSync(file, readFileSync(new URL("discovery.fixture.yaml", import.meta.url)));
+  mkdirSync(join(dir, "secrets"));
+  const answer = (path) => ({
+    "/source-types": { source_types: [{ vendor: "wiz", fields: [{ name: "client_secret", is_sensitive: true }] }] },
+    "/sources/test": { ok: true },
+    "/config": { error: null },
+    "/config/reload": { config: { error: null, restart_required: [] }, scans: [{ source_id: "w", source_name: "wiz-prod", config_name: "default", status: "running" }] },
+  })[path];
+  await withServer(async (base, asked) => {
+    const host = new URL(base).host;
+    const headers = { Host: host, Origin: `http://${host}`, "Content-Type": "application/json" };
+    const { hash } = JSON.parse((await request(base, { method: "GET", path: "/api/sources", headers })).text);
+    const source = {
+      name: "wiz-prod",
+      vendor: "wiz",
+      fields: { client_id: "abc", client_secret: "s3cret" },
+      configs: [{ name: "default", query: "", query_language: "none", lookback_window_seconds: 86400 }],
+    };
+    const res = await request(base, { path: "/api/sources/add", headers, body: JSON.stringify({ base_hash: hash, source }) });
+
+    assert.equal(res.status, 200, res.text);
+    const out = JSON.parse(res.text);
+    assert.deepEqual(out.scans.map((x) => [x.source_name, x.status]), [["wiz-prod", "running"]]);
+    assert.equal(out.deckard.error, null);
+    assert.match(readFileSync(file, "utf8"), /- name: wiz-prod/);
+    // Applied after the file was written, and only then.
+    const paths = asked.map((a) => a.path);
+    assert.equal(paths.at(-1), "/config/reload");
+    assert.equal(paths.filter((p) => p === "/config/reload").length, 1);
+  }, { env: { SOURCES_CONFIG: file, SOURCES_SECRETS: join(dir, "secrets") }, answer });
+});
+
+test("a Deckard without /config/reload still saves the source, and answers null scans", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "viewer-"));
+  const file = join(dir, "discovery.yaml");
+  writeFileSync(file, readFileSync(new URL("discovery.fixture.yaml", import.meta.url)));
+  mkdirSync(join(dir, "secrets"));
+  const answer = (path) => ({
+    "/source-types": { source_types: [{ vendor: "wiz", fields: [] }] },
+    "/sources/test": { ok: true },
+    "/config": { error: null },
+  })[path];
+  await withServer(async (base, asked) => {
+    const host = new URL(base).host;
+    const headers = { Host: host, Origin: `http://${host}`, "Content-Type": "application/json" };
+    const { hash } = JSON.parse((await request(base, { method: "GET", path: "/api/sources", headers })).text);
+    const source = { name: "wiz-prod", vendor: "wiz", fields: { client_id: "abc" }, configs: [{ name: "default" }] };
+    const res = await request(base, { path: "/api/sources/add", headers, body: JSON.stringify({ base_hash: hash, source }) });
+
+    assert.equal(res.status, 200, res.text);
+    const out = JSON.parse(res.text);
+    assert.equal(out.scans, null);
+    assert.equal(out.deckard, null);
+    assert.ok(out.hash);
+    assert.match(readFileSync(file, "utf8"), /- name: wiz-prod/);
+    assert.equal(asked.at(-1).path, "/config/reload");
+  }, { env: { SOURCES_CONFIG: file, SOURCES_SECRETS: join(dir, "secrets") }, answer });
 });

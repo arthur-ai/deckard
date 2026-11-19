@@ -11,7 +11,9 @@
 //                         form for each kind
 //   POST /api/sources/add, /update, /remove, /test
 //                         change discovery.yaml's sources, or Test Connection; see
-//                         sources.mjs. Deckard applies a change within seconds.
+//                         sources.mjs. A change is applied by Deckard before the
+//                         answer, which carries Deckard's scans so a new source shows
+//                         scanning at once.
 //
 // Configured from the environment: ES_URL, ES_USERNAME and ES_PASSWORD or ES_API_KEY,
 // ES_INDEX (logs-arthur.discovery-*), PORT (7493), HOST (0.0.0.0); DECKARD_URL and
@@ -30,6 +32,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  applyConfig,
   config,
   DeckardError,
   engineConfig,
@@ -117,6 +120,14 @@ async function listSources() {
   return { hash, sources: readSources(text, types.secretKeys), source_types: types.types, deckard: engine };
 }
 
+// After discovery.yaml is written: have Deckard apply it now, so a source just added is
+// already scanning when the page hears back. scans and deckard are null when Deckard
+// can't be asked; it then applies the file within its next check.
+async function applied(written) {
+  const now = await applyConfig(cfg);
+  return { ...written, scans: now?.scans ?? null, deckard: now?.config ?? null };
+}
+
 // add, update, remove and test, each from a POST body.
 const SOURCE_ACTIONS = {
   async add(body) {
@@ -176,7 +187,8 @@ async function handle(req, res) {
     if (!fromOwnPage(req)) return json(res, 403, { error: "sources can be changed only from the viewer's own page" });
     const body = await readJson(req);
     if (!body || typeof body !== "object") return json(res, 400, { error: "the body must be a JSON object" });
-    return json(res, 200, await SOURCE_ACTIONS[action](body));
+    const out = await SOURCE_ACTIONS[action](body);
+    return json(res, 200, action === "test" ? out : await applied(out));
   }
   if (url.pathname === "/api/scans/run") {
     if (req.method !== "POST") return json(res, 405, { error: "POST only" });

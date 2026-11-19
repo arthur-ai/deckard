@@ -443,6 +443,19 @@ export async function engineConfig(cfg, call = deckard) {
   }
 }
 
+// Asks Deckard to apply discovery.yaml now, rather than at its next check (every 5 s), and
+// to start what that made due: {config, scans}. Never throws: a Deckard without the route,
+// or one that can't be asked, answers null, and still applies the file at its next check.
+export async function applyConfig(cfg, call = deckard) {
+  try {
+    const res = await call(cfg, "POST", "/config/reload");
+    return { config: res.config ?? null, scans: Array.isArray(res.scans) ? res.scans : [] };
+  } catch (err) {
+    if (err instanceof DeckardError) return null;
+    throw err;
+  }
+}
+
 // Test Connection, or with validateOnly just the checks Deckard's config loader makes.
 // keepSecretsFrom names the configured source whose secrets fill the ones left blank.
 export async function testSource(cfg, source, { configName, keepSecretsFrom, validateOnly = false } = {}, call = deckard) {
