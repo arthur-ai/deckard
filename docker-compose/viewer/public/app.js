@@ -286,7 +286,7 @@ function scanControl(s, scan) {
   const elsewhere = RESCAN_ELSEWHERE[scan.vendor];
   if (elsewhere) return null;
   const asking = state.asking.get(s.key);
-  const label = asking ? "Asking…"
+  const label = asking ? "Queued"
     : scan.status === "running" ? "Scanning…"
     : scan.status === "waiting" ? "Queued"
     : scan.status === "stopping" ? "Stopping…"
@@ -318,7 +318,7 @@ async function askScan(s) {
       else state.scans.list.push(updated);
     }
   } catch (err) {
-    state.scanErrors.set(s.key, `Couldn't ask Deckard to scan: ${err.message}`);
+    state.scanErrors.set(s.key, `Unable to start the scan: ${err.message}`);
   } finally {
     state.asking.delete(s.key);
     renderSources();
@@ -357,7 +357,7 @@ function renderSources() {
   empty.textContent = "No scans yet. Deckard scans each source when it starts, and every interval after.";
   const note = $("scans-note");
   note.hidden = state.scans.available || !state.scans.reason;
-  note.textContent = `Scan buttons are off: ${state.scans.reason ?? ""}.`;
+  note.textContent = `Scan now is unavailable. ${state.scans.reason ?? ""}.`;
 
   const order = (s) => (s.last_scan?.succeeded === false ? 0 : 1);
   const list = [...sources].sort((a, b) => order(a) - order(b) || sourceLabel(a).localeCompare(sourceLabel(b)));

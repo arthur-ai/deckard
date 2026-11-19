@@ -172,7 +172,7 @@ and on its Sources tab, saying why. Deckard logs the same outcome:
 | a scan too old to publish | Run `./scan-local.sh` (`scan-local.ps1` on Windows) again |
 | nothing in the viewer at all | `docker compose logs deckard`. A config Deckard can't use stops it at startup, naming the problem, and a destination that refuses events is logged there too |
 | the viewer says it can't load Deckard's events | It names the problem: `docker compose logs viewer` for more |
-| the Sources tab says scan buttons are off | It names the problem. "can't be reached" while Deckard is up means this Deckard release has no control API yet |
+| the Sources tab says Scan now is unavailable | It names the problem. "can't be reached" while Deckard is up means this Deckard release has no control API yet |
 | `docker compose up` fails at `elastic-setup` | `docker compose logs elastic-setup` says why |
 | Compose warns of orphan containers `kibana` and `kibana-setup` | Left from before the viewer replaced Kibana: `docker compose up -d --wait --remove-orphans` removes them |
 
