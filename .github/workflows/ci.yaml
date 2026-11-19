@@ -168,6 +168,9 @@ jobs:
           status="$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' \
             -H 'Content-Type: application/json' -d '{"source_id":"x"}' http://127.0.0.1:7493/api/scans/run)"
           [ "$status" = 403 ] || { echo "::error::a scan request from another site got $status, not 403"; exit 1; }
+          status="$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' \
+            -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:7493/api/sources/add)"
+          [ "$status" = 403 ] || { echo "::error::adding a source from another site got $status, not 403"; exit 1; }
       - name: Logs
         if: always()
         working-directory: docker-compose

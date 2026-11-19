@@ -52,6 +52,12 @@ curl -s -u elastic:changeme 'localhost:9200/_query?format=txt' \
   `localhost:7493` on this machine sees what Deckard found. Deckard and the viewer reach
   Elasticsearch over Compose's private network, in plain HTTP. The browser never talks to
   Elasticsearch, only to the viewer's own few questions about Deckard's events.
+- **Add source** and **Edit** write `discovery.yaml` and `secrets/`, which the viewer has
+  mounted writable. Anyone who can load `localhost:7493` can add, change and test sources,
+  and a test of an edited source can use the secrets it already has. So the same rules as
+  Scan now apply: the viewer accepts a change only from its own page loaded as
+  `localhost`. A value containing `${` is refused, so a form can't make Deckard read an
+  environment variable into a source.
 - **Scan now** goes from the viewer to Deckard's control API on port 7494, which only
   Compose's private network can reach and which needs the token. That API can only bring a
   configured scan forward: it takes no config, credentials or destination, and a source
@@ -127,7 +133,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scan-local.ps1
 
 ## Adding sources
 
-Uncomment or add sources in `discovery.yaml`. Each one is documented in the
+The easy way is **Add source** on the viewer's Sources tab:
+
+1. Pick a kind of source. The forms are the Arthur Platform's, with the same fields
+   and help.
+2. Fill it in, and **Test connection**. Deckard reads a preview from the source and
+   shows the first agents it finds, or the vendor's error. Nothing is published.
+3. **Add source**. The viewer adds it to `discovery.yaml`, with each secret in its own
+   file in `secrets/`. Deckard notices the change and starts scanning it within seconds.
+
+**Edit** on a source's card changes it the same way, and **Remove** takes it out. Leave a
+secret blank to keep the one it has. The viewer changes only that source's lines in
+`discovery.yaml`; every other line and comment stays as you wrote it.
+
+To do it by hand instead, uncomment or add sources in `discovery.yaml`. Each one is documented in the
 [configuration reference](https://github.com/arthur-ai/arthur-engine/blob/main/ml-engine/docs/standalone-discovery.md).
 Keep their credentials out of the file:
 
@@ -135,16 +154,21 @@ Keep their credentials out of the file:
 - files it references as `{file: secrets/...}` go in `secrets/`, e.g. a GCP service
   account key at `secrets/gcp-key.json`.
 
-`.env`, `secrets/` and `local-scan/` are gitignored. Then apply the change:
+`.env`, `secrets/` and `local-scan/` are gitignored. Deckard watches `discovery.yaml` and
+the files in `secrets/` it reads, and applies a change to its sources within seconds; the
+viewer's Sources tab says so if it can't use the file as you left it. Two changes still
+need Deckard recreated:
+
+- a new or changed value in `.env`, which a container reads only when it is created;
+- a `discovery.yaml` saved by an editor that replaces the file rather than writing it in
+  place, which leaves the running container on the old one.
 
 ```bash
 docker compose up -d --wait --force-recreate deckard
 ```
 
-Deckard reads `discovery.yaml` and `.env` only when its container starts, and Compose
-doesn't notice an edited file by itself (an editor that saves by replacing the file even
-leaves the running container on the old one), so this recreates it. Do the same after
-every change to either file.
+A change to `schedule`, `destination` or `emit_scan_outcomes` needs only a restart:
+`docker compose restart deckard`.
 
 ## Sending to your SIEM
 
@@ -172,6 +196,8 @@ and on its Sources tab, saying why. Deckard logs the same outcome:
 | a scan too old to publish | Run `./scan-local.sh` (`scan-local.ps1` on Windows) again |
 | nothing in the viewer at all | `docker compose logs deckard`. A config Deckard can't use stops it at startup, naming the problem, and a destination that refuses events is logged there too |
 | the viewer says it can't load Deckard's events | It names the problem: `docker compose logs viewer` for more |
+| the Sources tab says adding sources is unavailable | It names the problem. "can't add sources yet" means this Deckard release has no source routes |
+| saving a source says the viewer can't write | Set `VIEWER_UID` in `.env` to the owner of `discovery.yaml` and `secrets/` (`id -u`), then `docker compose up -d --wait viewer` |
 | the Sources tab says Scan now is unavailable | It names the problem. "can't be reached" while Deckard is up means this Deckard release has no control API yet |
 | `docker compose up` fails at `elastic-setup` | `docker compose logs elastic-setup` says why |
 | Compose warns of orphan containers `kibana` and `kibana-setup` | Left from before the viewer replaced Kibana: `docker compose up -d --wait --remove-orphans` removes them |
@@ -184,7 +210,9 @@ Windows scan needs.
 
 - Deckard runs as UID `65532`, which must be able to read `discovery.yaml` and everything in
   `secrets/` and `local-scan/`. `scan-local.sh` sets that for its own files. For `secrets/`
-  on Linux, `chmod` or `chown` accordingly, and keep it unreadable to anyone else.
+  on Linux, `chmod` or `chown` accordingly, and keep it unreadable to anyone else. The
+  viewer does this for the secrets it writes: it runs as you (`VIEWER_UID`, which
+  `start.sh` sets) in Deckard's group, and writes them readable by that group only.
 - The image is built for `linux/amd64` and `linux/arm64`, so it runs natively on Apple
   Silicon and Intel alike. Deckard 0.1.0 was amd64 only; Docker Desktop runs it under
   emulation.

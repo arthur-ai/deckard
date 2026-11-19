@@ -36,6 +36,10 @@ export function config(env = process.env) {
     deckardTokenFile: env.DECKARD_CONTROL_TOKEN_FILE || null,
     // Host names the page may be loaded as, beyond this machine's own. A request naming
     // any other is refused, so a site that points its name at 127.0.0.1 can't read it.
+    // Deckard's discovery.yaml and secrets/ folder, mounted writable, for adding and
+    // editing sources. Off without the config file.
+    sourcesConfig: env.SOURCES_CONFIG || null,
+    sourcesSecrets: env.SOURCES_SECRETS || null,
     allowedHosts: (env.ALLOWED_HOSTS || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean),
   };
 }
@@ -354,7 +358,7 @@ function deckardToken(cfg) {
 
 // Calls Deckard's control API and returns its parsed answer, or throws a DeckardError that
 // says what went wrong.
-export async function deckard(cfg, method, path, body, fetchImpl = fetch) {
+export async function deckard(cfg, method, path, body, fetchImpl = fetch, timeoutMs = 10000) {
   const token = deckardToken(cfg);
   if (!cfg.deckardUrl || !token) {
     throw new DeckardError("The viewer isn't set up to ask Deckard for scans: it needs DECKARD_URL and a control token", 503);
@@ -365,9 +369,10 @@ export async function deckard(cfg, method, path, body, fetchImpl = fetch) {
       method,
       headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
+    if (err.name === "TimeoutError") throw new DeckardError(`Deckard didn't answer within ${timeoutMs / 1000} s`, 504);
     throw new DeckardError(
       `Deckard at ${cfg.deckardUrl} can't be reached (${err.cause?.code || err.message}). It may be restarting, or a Deckard release that takes no scan requests yet`,
       502,
@@ -382,6 +387,11 @@ export async function deckard(cfg, method, path, body, fetchImpl = fetch) {
   if (res.status === 401) throw new DeckardError("Deckard refused the viewer's control token; the two were given different tokens", 502);
   if (res.status === 404 && path === "/scans/run") {
     throw new DeckardError("Deckard has no scan configured for that source any more; refresh the page", 404);
+  }
+  if (res.status === 400 && json?.error) throw new DeckardError(json.error, 400);
+  // Flask's own 404, for a route this Deckard's control API doesn't have.
+  if (res.status === 404 && !json) {
+    throw new DeckardError("This Deckard release can't add sources yet: its control API has no source routes", 501);
   }
   if (!res.ok || !json) throw new DeckardError(`Deckard answered ${res.status}${json?.error ? `: ${json.error}` : ""}`, 502);
   return json;
@@ -411,4 +421,34 @@ export async function requestScan(cfg, body, call = deckard) {
   }
   const res = await call(cfg, "POST", "/scans/run", { source_id: sourceId, ...(configName != null ? { config_name: configName } : {}) });
   return { scans: Array.isArray(res.scans) ? res.scans : [] };
+}
+
+/* Sources */
+
+// Each vendor's form, from Deckard; and per vendor, the names of its secret fields.
+export async function sourceTypes(cfg, call = deckard) {
+  const res = await call(cfg, "GET", "/source-types");
+  const types = Array.isArray(res.source_types) ? res.source_types : [];
+  const secret = new Map(types.map((t) => [t.vendor, new Set((t.fields ?? []).filter((f) => f.is_sensitive).map((f) => f.name))]));
+  return { types, secretKeys: (vendor) => secret.get(vendor) ?? null };
+}
+
+// How Deckard's config file stands: when it was loaded, and why a later change wasn't.
+export async function engineConfig(cfg, call = deckard) {
+  try {
+    return await call(cfg, "GET", "/config");
+  } catch (err) {
+    if (err instanceof DeckardError) return null;
+    throw err;
+  }
+}
+
+// Test Connection, or with validateOnly just the checks Deckard's config loader makes.
+// keepSecretsFrom names the configured source whose secrets fill the ones left blank.
+export async function testSource(cfg, source, { configName, keepSecretsFrom, validateOnly = false } = {}, call = deckard) {
+  const body = { source, validate_only: validateOnly };
+  if (configName) body.config_name = configName;
+  if (keepSecretsFrom) body.keep_secrets_from = keepSecretsFrom;
+  // A test reads for up to 120 s before Deckard gives up on it.
+  return call(cfg, "POST", "/sources/test", body, undefined, validateOnly ? 10000 : 135000);
 }

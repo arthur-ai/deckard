@@ -127,11 +127,22 @@ test("the server asks Deckard only for a request from its own page", async () =>
       assert.equal(res.status, 403, `${JSON.stringify(headers)}: ${res.text}`);
     }
     assert.equal((await request(base, { method: "GET", headers: good })).status, 405);
-    assert.equal((await request(base, { headers: good, body: "x".repeat(5000) })).status, 413);
+    assert.equal((await request(base, { headers: good, body: "x".repeat(300 * 1024) })).status, 413);
     assert.equal((await request(base, { headers: good, body: "{" })).status, 400);
     // Reads need a local Host too, so a rebinding site can't read the agents either.
     assert.equal((await request(base, { method: "GET", path: "/api/scans", headers: { Host: "evil.example" } })).status, 403);
     assert.equal((await request(base, { method: "GET", path: "/api/scans", headers: { Host: host } })).status, 200);
     assert.equal(asked.filter((a) => a.path === "/scans/run").length, 1);
+    // Changing sources is guarded the same way.
+    for (const action of ["add", "update", "remove", "test"]) {
+      const path = `/api/sources/${action}`;
+      assert.equal((await request(base, { path, headers: { ...good, Origin: "http://evil.example" }, body: "{}" })).status, 403);
+      assert.equal((await request(base, { path, headers: { ...good, "Content-Type": "text/plain" }, body: "{}" })).status, 403);
+      assert.equal((await request(base, { path, method: "GET", headers: good })).status, 405);
+    }
+    // And without SOURCES_CONFIG, says it isn't set up.
+    const off = await request(base, { path: "/api/sources/remove", headers: good, body: '{"name":"x"}' });
+    assert.equal(off.status, 503);
+    assert.match(off.text, /SOURCES_CONFIG/);
   });
 });
