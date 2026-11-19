@@ -160,6 +160,14 @@ jobs:
           curl -fsS http://127.0.0.1:7493/api/overview \
             | jq -e '.agents[] | select(.name == "Claude Code" and .status == "current")' >/dev/null \
             || { echo "::error::the viewer does not show Claude Code as current"; exit 1; }
+          # Scan now: answered whether or not this Deckard has the control API, and refused
+          # to any page but the viewer's own.
+          curl -fsS http://127.0.0.1:7493/api/scans \
+            | jq -e '.available == false or any(.scans[]; .source_name == "this-machine")' >/dev/null \
+            || { echo "::error::the viewer's /api/scans is wrong"; exit 1; }
+          status="$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' \
+            -H 'Content-Type: application/json' -d '{"source_id":"x"}' http://127.0.0.1:7493/api/scans/run)"
+          [ "$status" = 403 ] || { echo "::error::a scan request from another site got $status, not 403"; exit 1; }
       - name: Logs
         if: always()
         working-directory: docker-compose

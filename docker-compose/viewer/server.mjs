@@ -5,15 +5,25 @@
 //   GET /api/overview     every agent and every source, shaped for the page
 //   GET /api/sightings    the scans one agent was reported in (?source_id=&external_id=)
 //   GET /api/health       200 once Elasticsearch answers the viewer's user
+//   GET /api/scans        where each of Deckard's scans stands, from Deckard's control API
+//   POST /api/scans/run   ask Deckard to scan one source now ({source_id, config_name})
 //
 // Configured from the environment: ES_URL, ES_USERNAME and ES_PASSWORD or ES_API_KEY,
-// ES_INDEX (logs-arthur.discovery-*), PORT (7493), HOST (0.0.0.0).
+// ES_INDEX (logs-arthur.discovery-*), PORT (7493), HOST (0.0.0.0); DECKARD_URL and
+// DECKARD_CONTROL_TOKEN or DECKARD_CONTROL_TOKEN_FILE for scans; ALLOWED_HOSTS.
+//
+// THERE IS NO LOGIN, so the viewer answers only a page loaded from this machine. Every
+// request must name localhost, 127.0.0.1 or [::1] (or an ALLOWED_HOSTS name) as its Host,
+// which keeps out a site that points its own name at 127.0.0.1. The one request that does
+// something, POST /api/scans/run, must also come from the viewer's own page: an Origin
+// matching its Host, and a JSON body, which a page elsewhere can't send without CORS the
+// viewer never grants.
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { config, es, EsError, overview, sightings } from "./lib.mjs";
+import { config, DeckardError, es, EsError, overview, requestScan, scans, sightings } from "./lib.mjs";
 
 const cfg = config();
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,8 +50,55 @@ function send(res, status, body, type) {
 
 const json = (res, status, value) => send(res, status, JSON.stringify(value), "application/json; charset=utf-8");
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+// The host name a request was sent to, without its port, or null if it has none.
+function hostName(host) {
+  if (!host) return null;
+  const m = /^(\[[0-9a-f:.]+\]|[^:]+)(?::\d+)?$/i.exec(host.trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
+function hostAllowed(req) {
+  const name = hostName(req.headers.host);
+  return name != null && (LOCAL_HOSTS.has(name) || cfg.allowedHosts.includes(name));
+}
+
+// Sent by the viewer's own page: from its own origin, as JSON.
+function fromOwnPage(req) {
+  const origin = req.headers.origin;
+  const own = [`http://${req.headers.host}`, `https://${req.headers.host}`];
+  const type = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  return own.includes(origin) && type === "application/json";
+}
+
+const MAX_BODY = 4096;
+
+async function readJson(req) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY) throw new DeckardError("the request is too large", 413);
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new DeckardError("the body must be JSON", 400);
+  }
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, "http://viewer");
+  if (!hostAllowed(req)) {
+    return json(res, 403, { error: "open the viewer as http://localhost:7493, or add this host name to ALLOWED_HOSTS" });
+  }
+  if (url.pathname === "/api/scans/run") {
+    if (req.method !== "POST") return json(res, 405, { error: "POST only" });
+    if (!fromOwnPage(req)) return json(res, 403, { error: "scans can be asked for only from the viewer's own page" });
+    return json(res, 202, await requestScan(cfg, await readJson(req)));
+  }
   if (req.method !== "GET" && req.method !== "HEAD") return json(res, 405, { error: "GET only" });
 
   if (url.pathname in STATIC) {
@@ -57,6 +114,7 @@ async function handle(req, res) {
     }
     return json(res, 200, await sightings(cfg, sourceId, externalId));
   }
+  if (url.pathname === "/api/scans") return json(res, 200, await scans(cfg));
   if (url.pathname === "/api/health") {
     // A search the viewer's user may run, so a wrong password or role fails the check.
     await es(cfg, `/${encodeURIComponent(cfg.index)}/_count`, { query: { match_none: {} } });
@@ -67,7 +125,7 @@ async function handle(req, res) {
 
 const server = createServer((req, res) => {
   handle(req, res).catch((err) => {
-    if (err instanceof EsError) return json(res, err.status, { error: err.message });
+    if (err instanceof EsError || err instanceof DeckardError) return json(res, err.status, { error: err.message });
     console.error(err);
     json(res, 500, { error: "the viewer failed; docker compose logs viewer says why" });
   });
@@ -75,6 +133,7 @@ const server = createServer((req, res) => {
 
 server.listen(cfg.port, cfg.host, () => {
   console.log(`Deckard viewer on port ${cfg.port}, reading ${cfg.index} at ${cfg.url}`);
+  if (cfg.deckardUrl) console.log(`Asking Deckard at ${cfg.deckardUrl} for scans`);
 });
 
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => server.close(() => process.exit(0)));

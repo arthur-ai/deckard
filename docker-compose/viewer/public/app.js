@@ -1,9 +1,15 @@
-// The viewer's page. Everything it shows comes from /api/overview; everything Deckard sent
-// is text from a scanned machine or cloud, so it only ever reaches the page as text nodes.
+// The viewer's page. What Deckard found comes from /api/overview, and where its scans stand
+// from /api/scans; everything Deckard sent is text from a scanned machine or cloud, so it
+// only ever reaches the page as text nodes.
 
 const REFRESH_MS = 60_000;
 const REFRESH_EMPTY_MS = 15_000;
 const NEW_SHOWN = 5;
+// How often to look again while a scan is running or waiting to.
+const SCAN_POLL_MS = 4_000;
+// Sources whose scan reads a file another tool writes: scanning again reads the same file.
+const RESCAN_ELSEWHERE = { local: "./scan-local.sh && docker compose restart deckard" };
+const ACTIVE = new Set(["running", "waiting", "stopping"]);
 
 const state = {
   data: null,
@@ -15,6 +21,11 @@ const state = {
   sort: { key: "name", dir: 1 },
   open: null,
   loading: false,
+  // Deckard's own view of its scans: { available, reason, list }.
+  scans: { available: false, reason: null, list: [] },
+  // Per source: "asking" while a scan request is out, or the error it came back with.
+  asking: new Map(),
+  scanErrors: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -51,6 +62,16 @@ function ago(iso) {
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   if (s < 7 * 86400) return `${Math.round(s / 86400)} d ago`;
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function until(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "—";
+  const s = Math.round((t - Date.now()) / 1000);
+  if (s < 45) return "any moment";
+  if (s < 3600) return `in ${Math.round(s / 60)} min`;
+  if (s < 86400) return `in ${Math.round(s / 3600)} h`;
+  return `in ${Math.round(s / 86400)} d`;
 }
 
 const exact = (iso) => (iso && !Number.isNaN(Date.parse(iso)) ? new Date(iso).toLocaleString() : "");
@@ -99,6 +120,8 @@ function facts(a) {
 }
 
 const RUNS_ON = { aws: "AWS", gcp: "GCP", azure: "Azure", endpoint: "Endpoint", unknown: "Unknown" };
+const keyOf = (id, config) => `${id}\u0000${config ?? ""}`;
+const scanOf = (s) => state.scans.list.find((x) => keyOf(x.source_id, x.config_name) === s.key);
 const sourceLabel = (s) => (s.config_name ? `${s.name} / ${s.config_name}` : s.name);
 const isCurrent = (a) => a.status !== "gone";
 
@@ -257,20 +280,95 @@ function renderAgents() {
   }
 }
 
-function renderSources() {
+// The Scan now button for source s, or what stands in for it.
+function scanControl(s, scan) {
+  if (!scan) return null;
+  const elsewhere = RESCAN_ELSEWHERE[scan.vendor];
+  if (elsewhere) return null;
+  const asking = state.asking.get(s.key);
+  const label = asking ? "Asking…"
+    : scan.status === "running" ? "Scanning…"
+    : scan.status === "waiting" ? "Queued"
+    : scan.status === "stopping" ? "Stopping…"
+    : "Scan now";
+  const busy = asking || ACTIVE.has(scan.status);
+  const title = scan.status === "waiting"
+    ? "Due now, waiting for another scan to finish (max_concurrent_scans)"
+    : scan.status === "stopping" ? "Past its scan_timeout and told to stop; it can't be scanned again until it ends"
+    : busy ? null : `Scan ${sourceLabel(s)} now instead of ${until(scan.next_due_at)}`;
+  return h("button", { type: "button", class: `scan-now${busy ? " busy" : ""}`, disabled: busy, title, onclick: () => askScan(s) },
+    busy ? h("span", { class: "spinner", "aria-hidden": "true" }) : null, label);
+}
+
+async function askScan(s) {
+  state.asking.set(s.key, true);
+  state.scanErrors.delete(s.key);
+  renderSources();
+  try {
+    const res = await fetch("/api/scans/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: s.id, config_name: s.config_name ?? undefined }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the viewer answered ${res.status}`);
+    for (const updated of body.scans ?? []) {
+      const i = state.scans.list.findIndex((x) => x.source_id === updated.source_id && x.config_name === updated.config_name);
+      if (i >= 0) state.scans.list[i] = updated;
+      else state.scans.list.push(updated);
+    }
+  } catch (err) {
+    state.scanErrors.set(s.key, `Couldn't ask Deckard to scan: ${err.message}`);
+  } finally {
+    state.asking.delete(s.key);
+    renderSources();
+    pollScans();
+  }
+}
+
+// Every source with events, then every scan Deckard has configured that hasn't sent any.
+function sourceList() {
   const { sources } = state.data;
+  const known = new Set(sources.map((s) => s.key));
+  const unseen = state.scans.list
+    .filter((x) => !known.has(keyOf(x.source_id, x.config_name)))
+    .map((x) => ({
+      key: keyOf(x.source_id, x.config_name),
+      id: x.source_id,
+      name: x.source_name,
+      vendor: x.vendor,
+      config_name: x.config_name,
+      scans: 0,
+      failed_scans: 0,
+      last_scan: null,
+      last_success_at: null,
+      recent: [],
+      unseen: true,
+    }));
+  return [...sources, ...unseen];
+}
+
+function renderSources() {
+  if (!state.data) return;
+  const sources = sourceList();
   $("count-sources").textContent = sources.length.toLocaleString();
   const empty = $("sources-empty");
   empty.hidden = sources.length > 0;
   empty.textContent = "No scans yet. Deckard scans each source when it starts, and every interval after.";
+  const note = $("scans-note");
+  note.hidden = state.scans.available || !state.scans.reason;
+  note.textContent = `Scan buttons are off: ${state.scans.reason ?? ""}.`;
 
   const order = (s) => (s.last_scan?.succeeded === false ? 0 : 1);
   const list = [...sources].sort((a, b) => order(a) - order(b) || sourceLabel(a).localeCompare(sourceLabel(b)));
   fill($("sources-list"), ...list.map((s) => {
     const ls = s.last_scan;
+    const scan = scanOf(s);
+    const scanError = state.scanErrors.get(s.key);
     const agentsHere = state.data.agents.filter((a) => a.source.id === s.id && a.source.config_name === s.config_name && isCurrent(a)).length;
     let pill;
-    if (!ls) pill = h("span", { class: "badge", title: "This source sends no scan outcomes: set emit_scan_outcomes: true" }, "No scan outcomes");
+    if (s.unseen) pill = h("span", { class: "badge" }, "Not scanned yet");
+    else if (!ls) pill = h("span", { class: "badge", title: "This source sends no scan outcomes: set emit_scan_outcomes: true" }, "No scan outcomes");
     else if (ls.succeeded) pill = h("span", { class: "badge ok" }, "Scanning fine");
     else pill = h("span", { class: "badge bad" }, "Last scan failed");
 
@@ -279,7 +377,7 @@ function renderSources() {
     return h("article", { class: "source" },
       h("div", { class: "source-head" },
         h("div", {}, h("h3", {}, s.name), h("div", { class: "meta" }, [s.vendor, s.config_name && `config ${s.config_name}`].filter(Boolean).join(" · "))),
-        pill),
+        h("div", { class: "source-actions" }, pill, scanControl(s, scan))),
       dl([
         ["Last scan", ls ? when(ls.at) : "—"],
         ls && ["Took", duration(ls.started_at, ls.finished_at)],
@@ -287,8 +385,11 @@ function renderSources() {
         ls && ["Sent last scan", ls.records_published ?? "—"],
         ["Scans", s.failed_scans ? `${s.scans.toLocaleString()} (${s.failed_scans.toLocaleString()} failed)` : s.scans.toLocaleString()],
         s.last_success_at && ls && !ls.succeeded && ["Last success", when(s.last_success_at)],
+        scan && scan.status === "scheduled" && scan.next_due_at && ["Next scan", h("span", { title: exact(scan.next_due_at) }, until(scan.next_due_at))],
+        scan && RESCAN_ELSEWHERE[scan.vendor] && ["Rescan", h("code", { title: "In docker-compose/: scanning again from here would read the same file" }, RESCAN_ELSEWHERE[scan.vendor])],
         cov && ["Machines read", `${(cov.devices_read ?? 0).toLocaleString()} of ${(cov.devices_in_scope ?? cov.devices_read ?? 0).toLocaleString()}`],
       ]),
+      scanError ? h("div", { class: "error-box" }, scanError) : null,
       ls && ls.succeeded === false
         ? h("div", { class: "error-box" }, h("strong", {}, ls.error_code ?? "error"), ls.error ? `: ${ls.error}` : "")
         : null,
@@ -457,6 +558,7 @@ async function load() {
     if (!res.ok) throw new Error(body.error || `the viewer answered ${res.status}`);
     state.data = body;
     updatedAt = Date.now();
+    if (!scanTimer) loadScans();
     banner.hidden = true;
     if (body.truncated) {
       banner.hidden = false;
@@ -473,6 +575,31 @@ async function load() {
     timer = setTimeout(load, empty ? REFRESH_EMPTY_MS : REFRESH_MS);
     showUpdated();
   }
+}
+
+// Asks where Deckard's scans stand, and keeps asking while any is running or due. When one
+// ends, its outcome and agents are in Elasticsearch: reload the page's data.
+let scanTimer = null;
+
+async function loadScans() {
+  const before = new Set(state.scans.list.filter((x) => ACTIVE.has(x.status)).map((x) => keyOf(x.source_id, x.config_name)));
+  try {
+    const res = await fetch("/api/scans");
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the viewer answered ${res.status}`);
+    state.scans = { available: body.available, reason: body.reason ?? null, list: body.scans ?? [] };
+  } catch (err) {
+    state.scans = { available: false, reason: err.message, list: [] };
+  }
+  const ended = [...before].some((k) => !state.scans.list.some((x) => keyOf(x.source_id, x.config_name) === k && ACTIVE.has(x.status)));
+  renderSources();
+  if (ended) load();
+  pollScans();
+}
+
+function pollScans() {
+  clearTimeout(scanTimer);
+  scanTimer = state.scans.list.some((x) => ACTIVE.has(x.status)) ? setTimeout(loadScans, SCAN_POLL_MS) : null;
 }
 
 function showUpdated() {

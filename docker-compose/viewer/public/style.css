@@ -256,6 +256,21 @@ td.where { max-width: 360px; word-break: break-all; }
 }
 .source-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .source-head .meta { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.source-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.scan-now { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; padding: 5px 12px; }
+.scan-now:disabled { cursor: default; color: var(--muted); }
+.scan-now.busy:hover { border-color: var(--border); }
+.spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-right-color: currentColor; opacity: 0.6; } }
+.scans-note { margin: 0 0 12px; }
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

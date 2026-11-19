@@ -19,7 +19,8 @@ machine and sends what it finds to Elasticsearch, which runs in this Compose fil
 Deckard's viewer beside it. Deckard scans once at startup, so its events are there within a
 minute. The viewer shows one row per agent, however many scans reported it, and marks the
 ones the latest successful scan no longer reports. Its Sources tab shows each source's recent
-scans and why any failed. Both kinds of event are described in
+scans and why any failed, and a **Scan now** button on each cloud, MDM and SIEM source
+that asks Deckard to scan it without waiting for the next interval. Both kinds of event are described in
 [Events and alerting](../docs/events.md).
 
 To see the agents from the terminal instead:
@@ -38,11 +39,18 @@ curl -s -u elastic:changeme 'localhost:9200/_query?format=txt' \
 | `elasticsearch` | Stores the events, at `localhost:9200`, in the `logs-arthur.discovery-default` data stream |
 | `viewer` | Shows them, at `localhost:7493`: Node running [`viewer/`](viewer/), with no dependencies to install |
 | `elastic-setup` | Runs once: creates the `deckard` user Deckard sends as, which can only add documents to `logs-arthur.discovery-*`, and the `deckard_viewer` user the viewer reads as, which can only read them |
+| `control-token` | Runs once: makes the random token the viewer shows Deckard to ask for a scan, kept in the `control` volume that only those two mount |
 
 - Both ports listen on this machine only, and the viewer has no login: anyone who can reach
   `localhost:7493` on this machine sees what Deckard found. Deckard and the viewer reach
   Elasticsearch over Compose's private network, in plain HTTP. The browser never talks to
   Elasticsearch, only to the viewer's own few questions about Deckard's events.
+- **Scan now** goes from the viewer to Deckard's control API on port 7494, which only
+  Compose's private network can reach and which needs the token. That API can only bring a
+  configured scan forward: it takes no config, credentials or destination, and a source
+  already scanning isn't started twice. The viewer accepts the request only from its own
+  page loaded as `localhost`, so another website you visit can't send it. A Deckard release
+  without the control API shows no buttons, and says why on the Sources tab.
 - One password, `ELASTIC_PASSWORD` in `.env` (`changeme` if unset), is used for `elastic`,
   `deckard` and `deckard_viewer`. Set your own and `docker compose up -d` again.
 - The events are kept in the `elasticsearch-data` volume. `docker compose down -v` deletes
@@ -122,6 +130,7 @@ and on its Sources tab, saying why. Deckard logs the same outcome:
 | a scan too old to publish | Run `./scan-local.sh` again |
 | nothing in the viewer at all | `docker compose logs deckard`. A config Deckard can't use stops it at startup, naming the problem, and a destination that refuses events is logged there too |
 | the viewer says it can't load Deckard's events | It names the problem: `docker compose logs viewer` for more |
+| the Sources tab says scan buttons are off | It names the problem. "can't be reached" while Deckard is up means this Deckard release has no control API yet |
 | `docker compose up` fails at `elastic-setup` | `docker compose logs elastic-setup` says why |
 | Compose warns of orphan containers `kibana` and `kibana-setup` | Left from before the viewer replaced Kibana: `docker compose up -d --wait --remove-orphans` removes them |
 
