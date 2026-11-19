@@ -26,6 +26,11 @@ const state = {
   // Per source: "asking" while a scan request is out, or the error it came back with.
   asking: new Map(),
   scanErrors: new Map(),
+  // discovery.yaml's sources and each kind's form: { hash, sources, types, deckard }, or
+  // { error } when the viewer can't change them.
+  srcs: null,
+  // The source being added or edited, or null.
+  editor: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -358,6 +363,7 @@ function renderSources() {
   const note = $("scans-note");
   note.hidden = state.scans.available || !state.scans.reason;
   note.textContent = `Scan now is unavailable. ${state.scans.reason ?? ""}.`;
+  renderSourcesStatus();
 
   const order = (s) => (s.last_scan?.succeeded === false ? 0 : 1);
   const list = [...sources].sort((a, b) => order(a) - order(b) || sourceLabel(a).localeCompare(sourceLabel(b)));
@@ -377,7 +383,7 @@ function renderSources() {
     return h("article", { class: "source" },
       h("div", { class: "source-head" },
         h("div", {}, h("h3", {}, s.name), h("div", { class: "meta" }, [s.vendor, s.config_name && `config ${s.config_name}`].filter(Boolean).join(" · "))),
-        h("div", { class: "source-actions" }, pill, scanControl(s, scan))),
+        h("div", { class: "source-actions" }, pill, scanControl(s, scan), editControl(s))),
       dl([
         ["Last scan", ls ? when(ls.at) : "—"],
         ls && ["Took", duration(ls.started_at, ls.finished_at)],
@@ -445,7 +451,7 @@ function openAgent(key) {
 function closeAgent() {
   state.open = null;
   $("drawer").hidden = true;
-  $("scrim").hidden = true;
+  if (!state.editor) $("scrim").hidden = true;
 }
 
 async function renderDrawer() {
@@ -523,6 +529,270 @@ async function renderDrawer() {
   }
 }
 
+
+/* Adding and editing sources */
+
+const CLASS_LABEL = { cloud: "Cloud", endpoint: "Endpoints (MDM)", siem: "SIEM", network: "Network logs" };
+// Kinds that aren't added from here: this machine's scan is set up by ./start.sh.
+const NOT_ADDED_HERE = new Set(["local"]);
+const LOOKBACKS = [
+  [3600, "1 hour"], [6 * 3600, "6 hours"], [86400, "1 day"], [7 * 86400, "7 days"], [30 * 86400, "30 days"], [0, "Everything (full listing)"],
+];
+const QUERY_LANGUAGE = { spl: "SPL", esql: "ES|QL", kql: "KQL" };
+
+const yamlSource = (name) => state.srcs?.sources?.find((x) => x.name === name);
+const typeOf = (vendor) => state.srcs?.types?.find((t) => t.vendor === vendor);
+const label = (name) => name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()).replace(/\bUrl\b|\burl\b/g, "URL").replace(/\bid\b/gi, "ID").replace(/\bca\b/gi, "CA").replace(/\bapi\b/gi, "API").replace(/\btls\b/gi, "TLS");
+const multiline = (f) => /certificate|_key$|regex|query/.test(f.name);
+
+async function loadSources() {
+  try {
+    const res = await fetch("/api/sources");
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the viewer answered ${res.status}`);
+    state.srcs = { hash: body.hash, sources: body.sources, types: body.source_types, deckard: body.deckard };
+  } catch (err) {
+    state.srcs = { error: err.message };
+  }
+  renderSources();
+}
+
+function renderSourcesStatus() {
+  const add = $("add-source");
+  add.hidden = !state.srcs || !!state.srcs.error;
+  const box = $("sources-status");
+  const d = state.srcs?.deckard;
+  fill(box,
+    state.srcs?.error ? h("p", { class: "small muted scans-note" }, `Adding sources is unavailable. ${state.srcs.error}.`) : null,
+    d?.error
+      ? h("div", { class: "error-box" }, h("strong", {}, "Deckard can't use discovery.yaml as it is now"),
+          `, so it's still scanning with the version it loaded ${ago(d.loaded_at)}. `, h("pre", { class: "plain" }, d.error))
+      : null,
+    d?.restart_required?.length
+      ? h("div", { class: "warn-box" }, h("strong", {}, `${d.restart_required.join(", ")} changed`),
+          " in discovery.yaml. That takes effect when Deckard restarts: ", h("code", {}, "docker compose restart deckard"))
+      : null);
+}
+
+function editControl(s) {
+  if (!state.srcs || state.srcs.error || !yamlSource(s.name)) return null;
+  return h("button", { type: "button", onclick: () => openEditor(s.name) }, "Edit");
+}
+
+function openEditor(name) {
+  const existing = name ? yamlSource(name) : null;
+  const config = existing?.configs?.[0];
+  state.editor = {
+    name: existing?.name ?? "",
+    editing: existing ? existing.name : null,
+    vendor: existing?.vendor ?? "",
+    // Each field as the form shows it. A secret, and a value read from a file, start
+    // blank: blank keeps what discovery.yaml has.
+    values: Object.fromEntries((existing?.fields ?? []).filter((f) => !f.secret && f.ref !== "file").map((f) => [f.key, f.value])),
+    config: {
+      name: config?.name ?? "default",
+      query: config?.query ?? "",
+      query_file: config?.query_file,
+      query_language: config?.query_language,
+      lookback_window_seconds: config?.lookback_window_seconds ?? 86400,
+    },
+    otherConfigs: (existing?.configs ?? []).slice(1),
+    test: null,
+    busy: null,
+    error: null,
+  };
+  $("editor").hidden = false;
+  $("scrim").hidden = false;
+  renderEditor();
+}
+
+function closeEditor() {
+  state.editor = null;
+  $("editor").hidden = true;
+  if (!state.open) $("scrim").hidden = true;
+}
+
+function renderEditor() {
+  const e = state.editor;
+  if (!e) return;
+  const type = typeOf(e.vendor);
+  const existing = e.editing ? yamlSource(e.editing) : null;
+  $("editor-title").textContent = e.editing ? `Edit ${e.editing}` : "Add source";
+  $("editor-sub").textContent = e.editing
+    ? `${type?.display_name ?? e.vendor} · changes go to discovery.yaml, and Deckard applies them within seconds`
+    : "Saved to discovery.yaml, with secrets in secrets/. Deckard starts scanning it within seconds.";
+
+  const kinds = (state.srcs?.types ?? []).filter((t) => !NOT_ADDED_HERE.has(t.vendor));
+  const groups = Object.entries(CLASS_LABEL).map(([cls, text]) => [text, kinds.filter((t) => t.source_class === cls)]).filter(([, ts]) => ts.length);
+
+  const field = (f) => {
+    const stored = existing?.fields?.find((x) => x.key === f.name);
+    const id = `f-${f.name}`;
+    let input;
+    let hint = null;
+    if (f.d_type === "enum") {
+      input = h("select", { id, onchange: (ev) => { e.values[f.name] = ev.target.value; } },
+        f.is_optional || !e.values[f.name] ? h("option", { value: "" }, f.is_optional ? "Default" : "Choose…") : null,
+        (f.allowed_values ?? []).map((v) => h("option", { value: v, selected: e.values[f.name] === v }, v)));
+    } else {
+      const props = {
+        id,
+        autocomplete: "off",
+        spellcheck: "false",
+        oninput: (ev) => { e.values[f.name] = ev.target.value; },
+      };
+      if (f.is_sensitive) {
+        if (stored?.set) {
+          props.placeholder = "Saved. Leave blank to keep it";
+          hint = stored.ref === "env" ? "Now read from an environment variable in .env" : stored.ref === "file" ? "Now read from a file in secrets/" : null;
+        }
+      } else if (stored?.ref === "file") {
+        props.placeholder = `Read from ${stored.file}. Leave blank to keep it`;
+      }
+      // What was typed, secret or not: the form re-renders while a test runs.
+      const value = e.values[f.name] ?? "";
+      input = multiline(f)
+        ? h("textarea", { ...props, rows: f.is_sensitive ? 4 : 3 }, value)
+        : h("input", { ...props, type: f.is_sensitive ? "password" : "text", value });
+    }
+    return h("div", { class: "field" },
+      h("label", { for: id }, label(f.name), f.is_optional ? h("span", { class: "muted" }, " (optional)") : null, f.is_sensitive ? h("span", { class: "badge" }, "secret") : null),
+      input,
+      f.description ? h("p", { class: "help" }, f.description) : null,
+      hint ? h("p", { class: "help" }, hint) : null);
+  };
+
+  const c = e.config;
+  const ql = type?.query_language && type.query_language !== "none" ? type.query_language : null;
+  const lookbacks = LOOKBACKS.some(([v]) => v === c.lookback_window_seconds) ? LOOKBACKS : [...LOOKBACKS, [c.lookback_window_seconds, `${Math.round(c.lookback_window_seconds / 3600)} hours`]];
+
+  fill($("editor-form"),
+    e.editing ? null : h("div", { class: "field" },
+      h("label", { for: "f-vendor" }, "Kind"),
+      h("select", { id: "f-vendor", onchange: (ev) => { e.vendor = ev.target.value; e.values = {}; e.test = null; e.error = null; e.config.query_language = typeOf(e.vendor)?.query_language; renderEditor(); } },
+        h("option", { value: "" }, "Choose a kind of source…"),
+        groups.map(([text, ts]) => h("optgroup", { label: text }, ts.map((t) => h("option", { value: t.vendor, selected: t.vendor === e.vendor }, `${t.display_name}${t.availability === "preview" ? " (preview)" : ""}`)))))),
+    e.editing ? null : type ? h("div", { class: "field" },
+      h("label", { for: "f-name" }, "Name"),
+      h("input", { id: "f-name", type: "text", autocomplete: "off", spellcheck: "false", value: e.name, placeholder: `${e.vendor.replace(/_/g, "-")}-prod`, oninput: (ev) => { e.name = ev.target.value; } }),
+      h("p", { class: "help" }, "How Deckard and this page name it. Letters, digits, dots, dashes and underscores. It can't be changed later.")) : null,
+    type ? h("fieldset", {}, h("legend", {}, `${type.display_name} settings`), [...type.fields].sort((a, b) => a.priority - b.priority).map(field)) : null,
+    type ? h("fieldset", {}, h("legend", {}, "Scan"),
+      h("div", { class: "field" },
+        h("label", { for: "f-lookback" }, "Look back"),
+        h("select", { id: "f-lookback", onchange: (ev) => { c.lookback_window_seconds = Number(ev.target.value); } },
+          lookbacks.map(([v, t]) => h("option", { value: v, selected: v === c.lookback_window_seconds }, t))),
+        h("p", { class: "help" }, "How far back each scan reads. A source that lists an inventory, rather than reading logs, ignores it.")),
+      ql ? h("div", { class: "field" },
+        h("label", { for: "f-query" }, `Query (${QUERY_LANGUAGE[ql] ?? ql})`, h("span", { class: "muted" }, " (optional)")),
+        h("textarea", { id: "f-query", rows: 5, spellcheck: "false", placeholder: c.query_file ? `Read from ${c.query_file}. Leave blank to keep it` : "Blank uses the agent catalog Deckard ships with", oninput: (ev) => { c.query = ev.target.value; } }, c.query ?? "")) : null,
+      e.otherConfigs.length ? h("p", { class: "help" }, `This source has ${plural(e.otherConfigs.length + 1, "config")}; only ${c.name} is edited here, and the rest are kept as they are.`) : null) : null,
+    e.error ? h("div", { class: "error-box" }, e.error) : null,
+    testResult(e.test),
+    type ? h("div", { class: "editor-actions" },
+      h("button", { type: "button", disabled: !!e.busy, onclick: () => runTest() }, e.busy === "test" ? [h("span", { class: "spinner", "aria-hidden": "true" }), "Testing…"] : "Test connection"),
+      h("button", { type: "submit", class: "primary", disabled: !!e.busy }, e.busy === "save" ? "Saving…" : e.editing ? "Save changes" : "Add source"),
+      e.editing ? h("button", { type: "button", class: "danger", disabled: !!e.busy, onclick: () => removeEditing() }, e.busy === "remove" ? "Removing…" : "Remove") : null) : null,
+  );
+}
+
+function testResult(t) {
+  if (!t) return null;
+  if (t.outcome === "succeeded") {
+    const rows = t.rows ?? [];
+    return h("div", { class: "ok-box" },
+      h("strong", {}, "Connected."),
+      ` ${rows.length ? `${plural(rows.length, "agent")}${t.truncated ? " or more" : ""} in the preview` : "The source answered, with no agents in the preview"}.`,
+      rows.length ? h("table", { class: "sub-table" },
+        h("thead", {}, h("tr", {}, h("th", {}, "Agent"), h("th", {}, "Runs on"), h("th", {}, "ID"))),
+        h("tbody", {}, rows.slice(0, 10).map((r) => h("tr", {}, h("td", {}, r.name ?? "—"), h("td", {}, r.runs_on ?? "—"), h("td", { class: "mono" }, r.external_id ?? "—"))))) : null);
+  }
+  const err = t.error ?? {};
+  return h("div", { class: "error-box" },
+    h("strong", {}, `Test failed: ${(err.category ?? "error").replace(/_/g, " ")}`),
+    err.vendor_status_code ? ` (HTTP ${err.vendor_status_code})` : "",
+    h("pre", { class: "plain" }, err.message ?? ""));
+}
+
+// The form as the viewer's API takes it.
+function formSource() {
+  const e = state.editor;
+  const fields = {};
+  for (const f of typeOf(e.vendor)?.fields ?? []) {
+    if (f.name in e.values) fields[f.name] = e.values[f.name] ?? "";
+    else if (!yamlSource(e.editing)?.fields?.find((x) => x.key === f.name && (x.ref === "file" || x.secret))) fields[f.name] = "";
+  }
+  const c = e.config;
+  const config = { name: c.name, query_language: typeOf(e.vendor)?.query_language ?? c.query_language ?? "none", lookback_window_seconds: c.lookback_window_seconds };
+  if (!(c.query_file && !c.query)) config.query = c.query ?? "";
+  return { name: e.editing ?? e.name.trim(), vendor: e.vendor, fields, configs: [config, ...e.otherConfigs] };
+}
+
+async function post(path, body) {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `the viewer answered ${res.status}`);
+  return out;
+}
+
+async function busy(kind, work) {
+  const e = state.editor;
+  e.busy = kind;
+  e.error = null;
+  renderEditor();
+  try {
+    await work(e);
+  } catch (err) {
+    e.error = err.message;
+  } finally {
+    e.busy = null;
+    if (state.editor === e) renderEditor();
+  }
+}
+
+function runTest() {
+  return busy("test", async (e) => {
+    e.test = null;
+    e.test = await post("/api/sources/test", { source: formSource(), editing: e.editing ?? undefined, config_name: e.config.name });
+  });
+}
+
+// After a change: Deckard reloads discovery.yaml within about 5 s. Look again then, and
+// at its scans, so the page shows the new source scanning (or why it can't).
+function afterChange(message) {
+  closeEditor();
+  showToast(message);
+  loadSources();
+  setTimeout(() => { loadSources(); loadScans(); }, 7000);
+  setTimeout(load, 15000);
+}
+
+function saveEditor() {
+  return busy("save", async (e) => {
+    const source = formSource();
+    if (e.editing) await post("/api/sources/update", { base_hash: state.srcs.hash, name: e.editing, source });
+    else await post("/api/sources/add", { base_hash: state.srcs.hash, source });
+    afterChange(e.editing ? `Saved ${e.editing}. Deckard applies the change within a few seconds.` : `Added ${source.name}. Deckard starts scanning it within a few seconds.`);
+  });
+}
+
+function removeEditing() {
+  const e = state.editor;
+  if (!confirm(`Remove ${e.editing} from discovery.yaml? Deckard stops scanning it. What it already found stays in Elasticsearch.`)) return;
+  return busy("remove", async () => {
+    await post("/api/sources/remove", { base_hash: state.srcs.hash, name: e.editing });
+    afterChange(`Removed ${e.editing}.`);
+  });
+}
+
+function showToast(text) {
+  const t = $("toast");
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => { t.hidden = true; }, 6000);
+}
+
 /* Loading */
 
 function setTab(tab) {
@@ -559,6 +829,7 @@ async function load() {
     state.data = body;
     updatedAt = Date.now();
     if (!scanTimer) loadScans();
+    if (!state.srcs) loadSources();
     banner.hidden = true;
     if (body.truncated) {
       banner.hidden = false;
@@ -632,8 +903,15 @@ function wire() {
     th.addEventListener("keydown", (e) => { if (e.key === "Enter") sort(); });
   }
   $("drawer-close").addEventListener("click", closeAgent);
-  $("scrim").addEventListener("click", closeAgent);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.open) closeAgent(); });
+  $("editor-close").addEventListener("click", closeEditor);
+  $("add-source").addEventListener("click", () => openEditor(null));
+  $("editor-form").addEventListener("submit", (e) => { e.preventDefault(); saveEditor(); });
+  $("scrim").addEventListener("click", () => { closeAgent(); closeEditor(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (state.editor) closeEditor();
+    else if (state.open) closeAgent();
+  });
   setInterval(showUpdated, 15_000);
   load();
 }

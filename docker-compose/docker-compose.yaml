@@ -80,7 +80,9 @@ services:
   # a user that can only read them. Listens on this machine only, with no login.
   viewer:
     image: node:24.22.1-alpine
-    user: node
+    # You, so it can edit discovery.yaml and secrets/, in Deckard's group, so Deckard can
+    # read the secret files it writes there without anyone else being able to.
+    user: "${VIEWER_UID:-1000}:65532"
     restart: unless-stopped
     read_only: true
     working_dir: /viewer
@@ -95,9 +97,16 @@ services:
       # Where Scan now asks Deckard to scan a source.
       DECKARD_URL: http://deckard:7494
       DECKARD_CONTROL_TOKEN_FILE: /control/token
+      # Where Add source writes: the discovery.yaml and secrets/ Deckard reads, which it
+      # watches and applies within seconds.
+      SOURCES_CONFIG: /deckard/discovery.yaml
+      SOURCES_SECRETS: /deckard/secrets
     volumes:
       - ./viewer:/viewer:ro
       - control:/control:ro
+      # Writable: the viewer edits these.
+      - ./discovery.yaml:/deckard/discovery.yaml
+      - ./secrets:/deckard/secrets
     ports:
       - 127.0.0.1:7493:7493
     depends_on:

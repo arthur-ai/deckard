@@ -1,0 +1,124 @@
+# Arthur Deckard config. Works as is: it scans this machine (after ./scan-local.sh) and
+# sends what it finds to the Elasticsearch beside it, to see in the viewer at localhost:7493.
+#
+# Full reference: https://github.com/arthur-ai/arthur-engine/blob/main/ml-engine/docs/standalone-discovery.md
+#
+# Keep credentials out of this file: ${NAME} is replaced from the container's environment
+# (set it in .env), and {file: path} reads a file relative to this one (secrets/ is mounted
+# beside it). Both .env and secrets/ are gitignored.
+#
+# Deckard reads this file and .env only when it starts. Apply a change with:
+#   docker compose up -d --wait --force-recreate deckard
+version: 1
+enabled: true
+
+schedule:
+  # How often each source/config is scanned: 90s, 15m, 6h, 1d, or seconds.
+  interval: 1h
+  # Scan once at startup rather than waiting one interval.
+  run_on_start: true
+  # Source/config pairs scanned at once.
+  max_concurrent_scans: 2
+
+sources:
+  # This machine: the scan ./scan-local.sh writes to ./local-scan, mounted here. Deckard
+  # re-reads it every interval; run ./scan-local.sh again to refresh it.
+  - name: this-machine
+    vendor: local
+    fields:
+      - {key: inventory_dir, value: /etc/deckard/local-scan}
+    configs:
+      - name: inventory
+        query: ""            # "" uses the agent catalog Deckard ships with
+        query_language: none
+        # Publish a scan up to 7 days old; an older one fails, saying how old it is.
+        lookback_window_seconds: 604800
+
+  # Vertex AI Agent Engine: lists the agent engines in one project and region.
+  # - name: vertex-prod
+  #   vendor: gcp_vertex
+  #   fields:
+  #     - {key: project_id, value: my-gcp-project}
+  #     - {key: location, value: us-central1}
+  #     # A service account JSON key with permission to list Agent Engines.
+  #     - {key: service_account_key, value: {file: secrets/gcp-key.json}}
+  #   configs:
+  #     - name: agent-engines
+  #       query: ""
+  #       query_language: none
+  #       # Not applied for Vertex: every scan lists every engine in the region.
+  #       lookback_window_seconds: 21600
+
+  # AWS Bedrock: agents, AgentCore runtimes, and the IAM roles CloudTrail shows
+  # calling Bedrock models.
+  # - name: bedrock-prod
+  #   vendor: aws_bedrock
+  #   fields:
+  #     - {key: regions, value: "us-east-1,us-west-2"}
+  #     - {key: access_key_id, value: "${AWS_ACCESS_KEY_ID_DISCOVERY}"}
+  #     - {key: secret_access_key, value: "${AWS_SECRET_ACCESS_KEY_DISCOVERY}"}
+  #   configs:
+  #     - name: agents-and-callers
+  #       query: ""
+  #       query_language: none
+  #       # The CloudTrail window. At least the interval, or callers in the gap are missed.
+  #       lookback_window_seconds: 21600
+
+  # Jamf Pro: the agent inventory Arthur's endpoint collector writes to each Mac. Deploy the
+  # collector through Jamf and create an API client for Deckard first:
+  # https://github.com/arthur-ai/arthur-engine/blob/main/integrations/endpoint-ai-discovery/docs/quickstart.md#macs-managed-by-jamf-pro
+  # - name: corp-macs
+  #   vendor: jamf_pro
+  #   fields:
+  #     - {key: base_url, value: https://example.jamfcloud.com}
+  #     - {key: client_id, value: "${JAMF_CLIENT_ID}"}
+  #     - {key: client_secret, value: "${JAMF_CLIENT_SECRET}"}
+  #     # Optional, comma-separated computer group names. The API client's role then also
+  #     # needs to read computer groups.
+  #     - {key: include_groups, value: "Engineering,Data Science"}
+  #   configs:
+  #     - name: all-macs
+  #       query: ""
+  #       query_language: none
+  #       # At least the interval: devices that reported only in a gap are missed.
+  #       lookback_window_seconds: 21600
+
+# Exactly one destination. This one is the Elasticsearch beside Deckard; see what it
+# receives in the viewer: http://localhost:7493
+destination:
+  type: elasticsearch
+  url: http://elasticsearch:9200
+  # A user that can only add Deckard's events, which docker-compose.yaml creates.
+  username: deckard
+  password: ${ELASTIC_PASSWORD}
+  # Plain HTTP is safe only because Elasticsearch is on Compose's private network.
+  allow_insecure_http: true
+
+# When you're ready, send to your SIEM instead. Your own Elasticsearch or Elastic
+# Security, with an API key that has create_doc and auto_configure on
+# logs-arthur.discovery-*:
+# destination:
+#   type: elasticsearch
+#   url: https://my-deployment.es.us-central1.gcp.cloud.es.io
+#   api_key: ${ELASTIC_API_KEY}
+#   # index: logs-arthur.discovery-default   # the default: a data stream, no setup
+#   # pipeline: arthur-to-ecs                # an ingest pipeline to run events through
+
+# Splunk HTTP Event Collector:
+# destination:
+#   type: splunk_hec
+#   url: https://splunk.example.com:8088/services/collector/event
+#   token: ${SPLUNK_HEC_TOKEN}
+#   # index: ai_inventory          # omitted: the token's default index
+#   # tls_verification: ca_only    # with ca_certificate, for Splunk's default certificate
+#   # ca_certificate: {file: secrets/splunk-ca.pem}
+
+# Or any HTTPS endpoint that takes a JSON array of events:
+# destination:
+#   type: webhook
+#   url: https://hooks.example.com/arthur
+#   headers:
+#     Authorization: "Bearer ${WEBHOOK_TOKEN}"
+
+# Also send each scan's outcome, so a broken source shows up at the destination.
+emit_scan_outcomes: true
