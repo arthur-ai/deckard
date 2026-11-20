@@ -65,7 +65,7 @@ jobs:
           eval "$(scripts/versions.sh)"
           title="Deckard $DECKARD_VERSION on Arthur Engine $TO"
           body="$(cat <<EOF
-          Moves Deckard to [Arthur Engine $TO](https://github.com/arthur-ai/arthur-engine/releases/tag/$TO): its image digest, and the collector \`scan-local.sh\` runs. [What changed since $FROM](https://github.com/arthur-ai/arthur-engine/compare/$FROM...$TO).
+          Moves Deckard to [Arthur Engine $TO](https://github.com/arthur-ai/arthur-engine/releases/tag/$TO): its image digest, and the collector \`scan-local.sh\` and \`scan-local.ps1\` run. [What changed since $FROM](https://github.com/arthur-ai/arthur-engine/compare/$FROM...$TO).
 
           Merging this releases Deckard $DECKARD_VERSION. Close it to skip this engine release.
           EOF
