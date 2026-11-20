@@ -105,7 +105,8 @@ was_running="$(docker compose ps -q --status running deckard 2>/dev/null || true
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 up() {
   # --remove-orphans: the Kibana an older checkout ran, which the viewer replaced.
-  docker compose up -d --wait --remove-orphans
+  # VIEWER_UID: the viewer edits discovery.yaml and secrets/ as you, who own them.
+  VIEWER_UID="${VIEWER_UID:-$(id -u)}" docker compose up -d --wait --remove-orphans
   [ -z "$was_running" ] || docker compose restart deckard
 }
 first=""
@@ -186,6 +187,6 @@ cat <<EOF
 
 ${bold}See them${reset}      http://localhost:7493
 ${bold}Rescan${reset}        ./start.sh
-${bold}Add sources${reset}   cloud, MDM or SIEM: see docker-compose/README.md
+${bold}Add sources${reset}   cloud, MDM or SIEM: the viewer's Sources tab
 
 EOF
