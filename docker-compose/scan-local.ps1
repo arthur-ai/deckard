@@ -166,5 +166,5 @@ if ($status.Count -eq 1) {
 Write-Host "Done: $summary-> $Folder"
 Write-Host 'Deckard reads it on its next scan. To start Deckard and see what it finds:'
 Write-Host '  docker compose up -d --wait'
-Write-Host '  then open http://localhost:5601/app/discover#/view/deckard-findings (user elastic, password changeme)'
+Write-Host '  then open http://localhost:7493'
 Write-Host 'If Deckard is already running, publish this scan now: docker compose restart deckard'

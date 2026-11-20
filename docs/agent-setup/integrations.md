@@ -282,7 +282,7 @@ Deckard sends to exactly one destination: the card's block replaces the whole
 | 1 | The user's own Elasticsearch or Elastic Security | `elasticsearch` |
 | 2 | Splunk HTTP Event Collector (HEC) | `splunk_hec` |
 | 3 | Any HTTPS webhook that takes a JSON array | `webhook` |
-| 4 | Keep the local Elasticsearch and Kibana | (no change) |
+| 4 | Keep the local Elasticsearch and the viewer | (no change) |
 | 5 | Rehearse first: a test webhook on this machine, no credentials | `webhook` |
 
 ### 1. `elasticsearch`
@@ -299,6 +299,16 @@ destination:
 ```
 - **Verify:** in their Kibana, Discover in ES|QL mode:
   `FROM logs-arthur.discovery-* | WHERE event_type == "arthur.discovery.agent" | KEEP @timestamp, agent.name, source.name`
+- **Viewer (optional):** only if the Elasticsearch has a certificate from a public CA: the
+  viewer can't trust a self-signed one, so with `tls_verification: ca_only` skip this and tell
+  the user the viewer keeps only what it has. Otherwise **[ASK USER]** "Point the viewer at
+  localhost:7493 at this Elasticsearch too, so it keeps showing the agents? (yes / no)". If
+  yes, write `VIEWER_ES_URL=` the same URL in `.env` (not secret), and have the user enter the
+  secret `VIEWER_ES_API_KEY` the prompt's 8.3 way: the `encoded` value of a second key,
+  read-only, created in Kibana > Dev Tools:
+  `POST /_security/api_key {"name": "deckard-viewer", "role_descriptors": {"deckard-viewer": {"indices": [{"names": ["logs-arthur.discovery-*"], "privileges": ["read"]}]}}}`.
+  Apply with `docker compose up -d --wait --no-deps --force-recreate viewer`; it is healthy
+  once that key can read, and `docker compose logs --tail 20 viewer` says why if not.
 
 ### 2. `splunk_hec`
 - **Ask:** the HEC URL ending `/services/collector/event` (Splunk Cloud:
@@ -333,7 +343,7 @@ destination:
 
 ### 4. Keep the local Elasticsearch
 Leave `destination:` as it is. **Verify:** run prompt Phase 6 again, and check the new
-source appears in the Deckard findings view.
+source appears on the viewer's Sources tab at http://localhost:7493.
 
 ### 5. Rehearsal: a test webhook on this machine
 No credentials, and nothing new to download: a receiver runs from Deckard's own image on its

@@ -54,9 +54,17 @@ jobs:
         working-directory: docker-compose
         run: docker compose config --quiet
 
+  viewer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test, on the image and files Compose runs it with
+        working-directory: docker-compose
+        run: docker compose run --rm --no-deps --no-TTY viewer node --test
+
   # The quickstart, end to end, on the engine image this version of Deckard publishes, on
   # each architecture it is built for: scan-local.sh runs the pinned collector, Deckard
-  # reads its scan, and an agent reaches Elasticsearch.
+  # reads its scan, an agent reaches Elasticsearch, and the viewer shows it.
   smoke:
     name: smoke (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -146,6 +154,12 @@ jobs:
           found "$scan AND outcome.succeeded:true" || { echo "::error::no successful scan"; exit 1; }
           found 'event_type:"arthur.discovery.agent" AND agent.name:"Claude Code"' \
             || { echo "::error::the scan did not report Claude Code"; exit 1; }
+      - name: The viewer shows it
+        run: |
+          curl -fsS http://127.0.0.1:7493/ | grep -q '<title>Deckard</title>'
+          curl -fsS http://127.0.0.1:7493/api/overview \
+            | jq -e '.agents[] | select(.name == "Claude Code" and .status == "current")' >/dev/null \
+            || { echo "::error::the viewer does not show Claude Code as current"; exit 1; }
       - name: Logs
         if: always()
         working-directory: docker-compose
