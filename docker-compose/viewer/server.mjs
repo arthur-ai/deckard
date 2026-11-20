@@ -67,7 +67,12 @@ async function handle(req, res) {
 
 const server = createServer((req, res) => {
   handle(req, res).catch((err) => {
-    if (err instanceof EsError) return json(res, err.status, { error: err.message });
+    if (err instanceof EsError) {
+      // Logged too: the healthcheck discards the answer, so this is where a failing
+      // viewer says why.
+      console.error(`${new URL(req.url, "http://viewer").pathname}: ${err.message}`);
+      return json(res, err.status, { error: err.message });
+    }
     console.error(err);
     json(res, 500, { error: "the viewer failed; docker compose logs viewer says why" });
   });

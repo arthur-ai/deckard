@@ -18,8 +18,8 @@ https://github.com/arthur-ai/deckard. Follow the phases in order.
    follow these instructions again once done, and end. Don't look for another way.
 4. **[ASK USER]** means: ask that question and wait for the answer. Never guess it. Ask
    before deleting anything.
-5. **Never print or repeat a secret.** The only password you may show is the local demo
-   password: `changeme`, unless `.env` sets `ELASTIC_PASSWORD`.
+5. **Never print or repeat a secret**, including the local Elasticsearch password
+   (`changeme` unless `.env` sets `ELASTIC_PASSWORD`): use it in commands, never show it.
 6. You cannot open a browser. Print URLs for the user.
 7. After each phase, tell the user in a line what passed.
 
@@ -49,7 +49,7 @@ git clone https://github.com/arthur-ai/deckard.git && cd deckard && pwd
 Then make the files the containers read readable to them (a strict umask can block it):
 
 ```bash
-cd <DECKARD_DIR>/docker-compose && chmod a+r discovery.yaml elastic/setup.sh && chmod a+rx elastic secrets local-scan && git -C <DECKARD_DIR> log -1 --format='%h %s'
+cd <DECKARD_DIR>/docker-compose && chmod a+r discovery.yaml elastic/setup.sh && chmod a+rx elastic secrets local-scan && chmod -R a+rX viewer && git -C <DECKARD_DIR> log -1 --format='%h %s'
 ```
 
 ## Phase 3: Pre-flight
@@ -107,9 +107,9 @@ If it fails, find the first service that isn't, and read its log
 | `elasticsearch` log has `OutOfMemoryError`, or exit code 137 | **[STOP]**: Docker needs more memory (Docker Desktop: Settings > Resources > Memory, 6 GB) |
 | `elasticsearch` log has `AccessDeniedException` on its data | **[ASK USER]** "May I delete the local Deckard data with `docker compose down -v`?" If yes, run it, then Phase 5 again |
 | `elastic-setup` log says `refused ELASTIC_PASSWORD` | the stored data keeps an older password. **[ASK USER]** whether to delete the data as above, or to set that password as `ELASTIC_PASSWORD` in `.env` themselves (as for a secret, 8.3) |
-| `Permission denied` on `/setup/setup.sh` or `discovery.yaml` | run Phase 2's `chmod` line, then Phase 5 again |
+| `Permission denied` on `/setup/setup.sh` or `discovery.yaml`, or `viewer` log has `EACCES` | run Phase 2's `chmod` line, then Phase 5 again |
 | `elasticsearch` not healthy | it is slow on a first start: run Phase 5 once more |
-| `viewer` not healthy | `docker compose logs --tail 20 viewer` says what Elasticsearch answered it; `refused the viewer's credentials` means `elastic-setup` didn't run: Phase 5 again |
+| `viewer` not healthy | `docker compose logs --tail 20 viewer` says what Elasticsearch answered it. `refused the viewer's credentials` or `may not read`: run Phase 5 again (it reruns `elastic-setup`, which creates the viewer's user); `can't be reached`: `elasticsearch` isn't up yet |
 | `deckard` restarting | its log names the config problem: fix it (Phase 8) |
 
 If the same failure repeats, **[STOP]** with the log lines.
@@ -146,7 +146,8 @@ Only after Phase 6 passed, print this with the agent list from Phase 6:
 > Each agent shows where it is, what kind it is, and when Deckard first and last saw it.
 > Click one for everything its source reported. **Needs attention**, at the top, lists new
 > agents and any scan that failed or couldn't see all of its scope, and the **Sources** tab
-> shows how each source's recent scans went.
+> shows how each source's recent scans went. It has no login: it listens on this machine
+> only.
 
 ## Phase 8: Connect a real source and destination
 
@@ -224,6 +225,9 @@ notice an edited file, so **after every change to either, recreate it**:
 cd <DECKARD_DIR>/docker-compose && docker compose up -d --wait --no-deps --force-recreate deckard
 ```
 
+If you set or changed `VIEWER_ES_URL` or `VIEWER_ES_API_KEY`, also run
+`docker compose up -d --wait --no-deps --force-recreate viewer`.
+
 Then wait for the new source's first scan (up to 5 minutes; a large cloud source can take
 15), replacing `<source name>` with its `name`:
 
@@ -249,7 +253,9 @@ After any fix to `discovery.yaml` or `.env`, run 8.5 again.
 ### 8.6 Finish
 
 Tell the user which sources run, where events go, how often (`schedule.interval`, `1h` as
-shipped), where the `discovery.yaml.bak-*` backup is, and the Appendix. `.env` and `secrets/`
+shipped), where the `discovery.yaml.bak-*` backup is, and the Appendix. If events no longer go
+to an Elasticsearch the viewer reads (the local one, or theirs through `VIEWER_ES_URL`), tell
+them http://localhost:7493 now shows only what Deckard found before this change. `.env` and `secrets/`
 hold their credentials and are gitignored; `discovery.yaml` is now changed in their checkout,
 so a later `git pull` may need `git stash` first.
 
@@ -263,7 +269,7 @@ From `<DECKARD_DIR>/docker-compose`:
 | See status | `docker compose ps -a` |
 | Read Deckard's log | `docker compose logs --tail 100 deckard` |
 | Rescan this machine now | `./scan-local.sh && docker compose restart deckard` |
-| Apply a changed `discovery.yaml` or `.env` | `docker compose up -d --wait --no-deps --force-recreate deckard` |
+| Apply a changed `discovery.yaml` or `.env` | `docker compose up -d --wait --no-deps --force-recreate deckard` (add `viewer` after a `VIEWER_*` change) |
 | Stop, keeping the data | `docker compose down` |
 | Start again | `docker compose up -d --wait` |
 | Delete everything, events too | `docker compose down -v` (ask first) |
