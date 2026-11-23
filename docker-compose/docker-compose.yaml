@@ -85,6 +85,9 @@ services:
     user: "${VIEWER_UID:-1000}:65532"
     restart: unless-stopped
     read_only: true
+    # Scratch space for its tests, which CI runs in this container.
+    tmpfs:
+      - /tmp
     working_dir: /viewer
     command: ["node", "server.mjs"]
     environment:
