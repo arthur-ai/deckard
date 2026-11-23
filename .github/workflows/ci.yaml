@@ -431,7 +431,20 @@ jobs:
             'install', '--quiet', '--accept-license', '--backend=wsl-2', '--always-run-service', '--no-windows-containers'
           if ($install.ExitCode -ne 0) { throw "the Docker Desktop installer exited $($install.ExitCode)" }
           Add-Content -Path $env:GITHUB_PATH -Value "$env:ProgramFiles\Docker\Docker\resources\bin"
+      # Its own step, so its log is uploaded before Docker Desktop starts: twice the start
+      # has hung until the job's time ran out, and the job's log was lost both times.
+      - name: Describe the runner, for a start that hangs
+        run: |
+          $ErrorActionPreference = 'Continue'
+          "Image: $env:ImageOS $env:ImageVersion"
+          wsl --version
+          wsl --status
+          wsl --list --verbose
+          Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform |
+            Format-Table FeatureName, State
       - name: Start Docker Desktop
+        # Well under the job's 30, so a start that hangs fails here, with its log kept.
+        timeout-minutes: 10
         run: |
           # Windows PowerShell turns a native command's redirected stderr into errors, which
           # the default 'Stop' would throw on while the engine starts.
@@ -446,6 +459,14 @@ jobs:
           if ((docker info --format '{{.OSType}}' 2>$null) -ne 'linux') {
             throw 'Docker Desktop did not start its Linux engine'
           }
+      - name: Docker Desktop's own logs, if it didn't start
+        if: failure()
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Continue'
+          wsl --list --verbose
+          Get-ChildItem "$env:LOCALAPPDATA\Docker\log" -Recurse -Filter *.log -ErrorAction SilentlyContinue |
+            ForEach-Object { "==== $($_.FullName)"; Get-Content $_.FullName -Tail 60 }
       - name: Install osquery
         run: |
           $msi = Join-Path $env:RUNNER_TEMP 'osquery.msi'
