@@ -9,6 +9,9 @@
 //   POST /api/scans/run   ask Deckard to scan one source now ({source_id, config_name})
 //   GET /api/sources      the sources in discovery.yaml, with no secret's value, and the
 //                         form for each kind
+//   GET /api/local-scan   where this machine's scan stands, run by ./start.sh on the host
+//   POST /api/local-scan  ask ./start.sh to scan this machine again, then Deckard to read
+//                         the scan; see localscan.mjs
 //   POST /api/sources/add, /update, /remove, /test
 //                         change discovery.yaml's sources, or Test Connection; see
 //                         sources.mjs. A change is applied by Deckard before the
@@ -18,7 +21,7 @@
 // Configured from the environment: ES_URL, ES_USERNAME and ES_PASSWORD or ES_API_KEY,
 // ES_INDEX (logs-arthur.discovery-*), PORT (7493), HOST (0.0.0.0); DECKARD_URL and
 // DECKARD_CONTROL_TOKEN or DECKARD_CONTROL_TOKEN_FILE for scans; SOURCES_CONFIG and
-// SOURCES_SECRETS for sources; ALLOWED_HOSTS.
+// SOURCES_SECRETS for sources; LOCAL_SCAN_RUNNER for this machine's scan; ALLOWED_HOSTS.
 //
 // THERE IS NO LOGIN, so the viewer answers only a page loaded from this machine. Every
 // request must name localhost, 127.0.0.1 or [::1] (or an ALLOWED_HOSTS name) as its Host,
@@ -45,6 +48,7 @@ import {
   sourceTypes,
   testSource,
 } from "./lib.mjs";
+import { followRun, LocalScanError, requestLocalScan, runnerState } from "./localscan.mjs";
 import {
   addSource,
   buildSource,
@@ -161,6 +165,40 @@ const SOURCE_ACTIONS = {
   },
 };
 
+// The run of this machine's scan the viewer last followed to its end: {run, at, error,
+// scanned}, scanned when Deckard was asked to read it. The page waits on it.
+let handoff = null;
+const following = new Set();
+
+// After a run the page asked for: once it ends, have Deckard scan each local source, which
+// reads the folder the run wrote.
+async function scanLocalSources() {
+  const now = await scans(cfg);
+  if (!now.available) throw new DeckardError(now.reason, 502);
+  const local = now.scans.filter((x) => x.vendor === "local");
+  for (const x of local) await requestScan(cfg, { source_id: x.source_id, config_name: x.config_name ?? undefined });
+}
+
+async function localScan(req) {
+  if (req.method === "POST") {
+    if (!fromOwnPage(req)) throw new LocalScanError("this machine can be scanned only from the viewer's own page", 403);
+    const asked = await requestLocalScan(cfg.localScanRunner);
+    if (!following.has(asked.run)) {
+      following.add(asked.run);
+      followRun(cfg.localScanRunner, asked.run, {
+        askDeckard: scanLocalSources,
+        done: (out) => {
+          following.delete(asked.run);
+          handoff = out;
+          if (out.error) console.error(`/api/local-scan: run ${out.run}: ${out.error}`);
+        },
+      });
+    }
+    return { ...(await runnerState(cfg.localScanRunner)), handoff, asked: asked.run };
+  }
+  return { ...(await runnerState(cfg.localScanRunner)), handoff };
+}
+
 async function readJson(req) {
   let size = 0;
   const chunks = [];
@@ -195,6 +233,10 @@ async function handle(req, res) {
     if (!fromOwnPage(req)) return json(res, 403, { error: "scans can be asked for only from the viewer's own page" });
     return json(res, 202, await requestScan(cfg, await readJson(req)));
   }
+  if (url.pathname === "/api/local-scan") {
+    if (req.method !== "POST" && req.method !== "GET") return json(res, 405, { error: "GET or POST" });
+    return json(res, req.method === "POST" ? 202 : 200, await localScan(req));
+  }
   if (req.method !== "GET" && req.method !== "HEAD") return json(res, 405, { error: "GET only" });
 
   if (url.pathname in STATIC) {
@@ -222,7 +264,7 @@ async function handle(req, res) {
 
 const server = createServer((req, res) => {
   handle(req, res).catch((err) => {
-    if (err instanceof EsError || err instanceof DeckardError || err instanceof SourcesError) {
+    if (err instanceof EsError || err instanceof DeckardError || err instanceof SourcesError || err instanceof LocalScanError) {
       // Logged too: the healthcheck discards the answer, so this is where a failing
       // viewer says why.
       console.error(`${new URL(req.url, "http://viewer").pathname}: ${err.message}`);

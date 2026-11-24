@@ -25,6 +25,26 @@
 
   <main>
     <div id="banner" class="banner" hidden></div>
+
+    <section id="panel-welcome" class="welcome" aria-labelledby="welcome-title" hidden>
+      <div class="welcome-head">
+        <h2 id="welcome-title">Welcome to Deckard</h2>
+        <p class="muted">Deckard is looking for AI agents on this machine. While it does, add the
+          other places agents run: your clouds, your MDM and your SIEM.</p>
+      </div>
+      <ol class="steps">
+        <li id="welcome-local" class="step"></li>
+        <li id="welcome-sources" class="step"></li>
+      </ol>
+      <div class="welcome-foot">
+        <button id="welcome-done" type="button" class="primary">Go to the dashboard</button>
+        <p class="small muted">Deckard scans each source every hour, and sends what it finds to the
+          Elasticsearch beside it. To send it to your own SIEM instead, see
+          <code>docker-compose/README.md</code>.</p>
+      </div>
+    </section>
+
+    <div id="dashboard">
     <section id="stats" class="stats" aria-label="Summary"></section>
     <section id="attention" class="attention" aria-label="Needs attention" hidden></section>
 
@@ -72,6 +92,7 @@
       <div id="sources-list" class="sources"></div>
       <p id="sources-empty" class="empty" hidden></p>
     </section>
+    </div>
   </main>
 
   <aside id="drawer" class="drawer" hidden aria-label="Agent details">

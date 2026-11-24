@@ -4,9 +4,16 @@
 ../start.sh
 ```
 
-It runs `preflight.sh`, `scan-local.sh` and `docker compose up -d --wait`, waits for Deckard's
-first scan, and prints the agents found. Then open the viewer at
-[localhost:7493](http://localhost:7493). You need Docker Compose 2.24 or later.
+It runs `preflight.sh`, then `scan-local.sh` while it starts Elasticsearch and the viewer, and
+opens the viewer's welcome page at [localhost:7493](http://localhost:7493/#welcome), where you
+can add cloud, MDM and SIEM sources while the scan runs. Then it starts Deckard, waits for its
+first scan, and prints the agents found. You need Docker Compose 2.24 or later.
+
+On a terminal it keeps running after that, so the viewer's **Scan now** can scan this machine
+again: the scan has to run on the host, which the viewer's container can't reach. The two pass
+requests and results through `runner/` (see [`viewer/localscan.mjs`](viewer/localscan.mjs)).
+Ctrl-C stops it and leaves Deckard running. Without a terminal, as under a coding agent, it
+exits once it has printed the agents. `DECKARD_NO_BROWSER=1` keeps it from opening a browser.
 
 On Windows, run the two steps yourself, from PowerShell ([On Windows](#on-windows)):
 
@@ -94,7 +101,8 @@ mounts into Deckard:
   download doesn't match the pinned hash.
 - Deckard re-reads `local-scan/` every interval (1 hour in the shipped config), but the
   folder only changes when you run `./scan-local.sh` again. To publish a new scan now,
-  `docker compose restart deckard`. A scan more than 7 days old is not published.
+  `docker compose restart deckard`, or use **Scan now** in the viewer while `../start.sh` runs,
+  which does both. A scan more than 7 days old is not published.
 
 ### On Windows
 
