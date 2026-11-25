@@ -92,3 +92,50 @@ test("removing a source takes its comment and its own secret files, and never th
   // A file the viewer didn't name after the source is someone else's.
   assert.deepEqual(ownSecretFiles({ name: "a", fields: [{ key: "k", value: { file: "secrets/gcp.json" } }] }), []);
 });
+
+const SPLUNK = SHIPPED.replace(
+  "  - name: this-machine",
+  "  - name: siem\n    vendor: splunk_enterprise\n    fields:\n      - {key: base_url, value: \"${SPLUNK_URL}\"}\n      - {key: auth_token, value: {file: secrets/siem.auth_token}}\n      - {key: ca_certificate, value: {file: certs/ca.pem}}\n    configs:\n      - {name: all, query: \"search index=ai\", query_language: spl, lookback_window_seconds: 86400}\n  - name: this-machine",
+);
+const splunkKeys = (vendor) => (vendor === "splunk_enterprise" ? new Set(["auth_token"]) : secretKeys(vendor));
+const splunkForm = (fields = {}, query = "search index=ai") => ({
+  name: "siem",
+  vendor: "splunk_enterprise",
+  fields: { base_url: "${SPLUNK_URL}", auth_token: "", tls_verification: "", ...fields },
+  configs: [{ name: "all", query, query_language: "spl", lookback_window_seconds: 86400 }],
+});
+
+test("an environment reference sent back unchanged is kept, and Deckard fills it in a test", () => {
+  const existing = itemOf(SPLUNK, "siem");
+  const built = buildSource(splunkForm(), { secretKeys: splunkKeys, existing });
+  const edited = parse(replaceSource(SPLUNK, "siem", built.item)).sources[0];
+  assert.deepEqual(edited.fields, [
+    { key: "base_url", value: "${SPLUNK_URL}" },
+    { key: "auth_token", value: { file: "secrets/siem.auth_token" } },
+    { key: "ca_certificate", value: { file: "certs/ca.pem" } },
+  ]);
+  assert.equal(built.keeps, true);
+  assert.deepEqual(built.test.fields, [
+    { key: "base_url", value: null },
+    { key: "ca_certificate", value: null },
+  ]);
+  // Changed, it is typed, and refused.
+  assert.throws(() => buildSource(splunkForm({ base_url: "${OTHER}" }), { secretKeys: splunkKeys, existing }), /environment variable/);
+});
+
+test("a test names the configured source only when it needs its values", () => {
+  const plain = SHIPPED.replace(
+    "  - name: this-machine",
+    "  - name: siem\n    vendor: splunk_enterprise\n    fields:\n      - {key: base_url, value: https://splunk.acme.com:8089}\n      - {key: auth_token, value: {file: secrets/siem.auth_token}}\n    configs:\n      - {name: all, query: \"search index=ai\", query_language: spl, lookback_window_seconds: 86400}\n  - name: this-machine",
+  );
+  const existing = itemOf(plain, "siem");
+  const retyped = buildSource(splunkForm({ base_url: "https://splunk2.acme.com:8089", auth_token: "NEW" }), { secretKeys: splunkKeys, existing });
+  assert.equal(retyped.keeps, false);
+  const blank = buildSource(splunkForm({ base_url: "https://splunk.acme.com:8089" }), { secretKeys: splunkKeys, existing });
+  assert.equal(blank.keeps, true);
+});
+
+test("a source whose scans run a query needs one", () => {
+  assert.throws(() => buildSource(splunkForm({ base_url: "https://s", auth_token: "t" }, "  "), { secretKeys: splunkKeys }), /needs a query/);
+  assert.doesNotThrow(() => buildSource(wizForm(), { secretKeys }));
+});

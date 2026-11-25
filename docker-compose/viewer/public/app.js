@@ -589,7 +589,16 @@ const QUERY_LANGUAGE = { spl: "SPL", esql: "ES|QL", kql: "KQL" };
 const yamlSource = (name) => state.srcs?.sources?.find((x) => x.name === name);
 const typeOf = (vendor) => state.srcs?.types?.find((t) => t.vendor === vendor);
 const label = (name) => name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()).replace(/\bUrl\b|\burl\b/g, "URL").replace(/\bid\b/gi, "ID").replace(/\bca\b/gi, "CA").replace(/\bapi\b/gi, "API").replace(/\btls\b/gi, "TLS");
-const multiline = (f) => /certificate|_key$|regex|query/.test(f.name);
+// Secrets are never multi-line here: they are password inputs, so they don't show on
+// screen. A browser strips the line breaks from what is pasted into one, which leaves a
+// service account's JSON key valid: its own line breaks are escaped inside its strings.
+const multiline = (f) => !f.is_sensitive && /certificate|_key$|regex|query/.test(f.name);
+// What a query's results must hold, for the vendors whose scans run one.
+const QUERY_HELP = "One row per agent, with external_id (stable across scans), name and last_seen columns. llm_models, tools, sub_agents, data_sources, runs_on and platform are optional; any other column fails the scan.";
+const QUERY_EXAMPLE = {
+  spl: "search index=<index> <filter>\n| stats max(_time) as last_seen, values(model) as llm_models by consumer\n| eval external_id=\"<namespace>:\" . consumer, name=consumer, last_seen=strftime(last_seen, \"%Y-%m-%dT%H:%M:%SZ\")\n| table external_id, name, last_seen, llm_models",
+  esql: "FROM <index>\n| STATS last_seen = MAX(@timestamp), llm_models = VALUES(model) BY consumer\n| EVAL external_id = CONCAT(\"<namespace>:\", consumer), name = consumer\n| KEEP external_id, name, last_seen, llm_models\n| LIMIT 10000",
+};
 
 async function loadSources() {
   try {
@@ -733,8 +742,9 @@ function renderEditor() {
           lookbacks.map(([v, t]) => h("option", { value: v, selected: v === c.lookback_window_seconds }, t))),
         h("p", { class: "help" }, "How far back each scan reads. A source that lists an inventory, rather than reading logs, ignores it.")),
       ql ? h("div", { class: "field" },
-        h("label", { for: "f-query" }, `Query (${QUERY_LANGUAGE[ql] ?? ql})`, h("span", { class: "muted" }, " (optional)")),
-        h("textarea", { id: "f-query", rows: 5, spellcheck: "false", placeholder: c.query_file ? `Read from ${c.query_file}. Leave blank to keep it` : "Blank uses the agent catalog Deckard ships with", oninput: (ev) => { c.query = ev.target.value; } }, c.query ?? "")) : null,
+        h("label", { for: "f-query" }, `Query (${QUERY_LANGUAGE[ql] ?? ql})`),
+        h("textarea", { id: "f-query", rows: 5, spellcheck: "false", placeholder: c.query_file ? `Read from ${c.query_file}. Leave blank to keep it` : QUERY_EXAMPLE[ql] ?? "", oninput: (ev) => { c.query = ev.target.value; } }, c.query ?? ""),
+        h("p", { class: "help" }, QUERY_HELP)) : null,
       e.otherConfigs.length ? h("p", { class: "help" }, `This source has ${plural(e.otherConfigs.length + 1, "config")}; only ${c.name} is edited here, and the rest are kept as they are.`) : null) : null,
     e.error ? h("div", { class: "error-box" }, e.error) : null,
     testResult(e.test),

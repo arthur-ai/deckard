@@ -25,7 +25,9 @@
 // which keeps out a site that points its own name at 127.0.0.1. Every POST, the requests
 // that do something, must also come from the viewer's own page: an Origin matching its
 // Host, and a JSON body, which a page elsewhere can't send without CORS the viewer never
-// grants.
+// grants. Those checks stop browsers, not programs: anything running on this machine can
+// send any Host and Origin it likes, so on a machine other people log in to, anyone who
+// can reach the port can do what the page does.
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -143,7 +145,7 @@ const SOURCE_ACTIONS = {
     return needSources().update(body.base_hash, async (text) => {
       const existing = itemOf(text, body.name);
       const built = buildSource(body.source, { secretKeys, existing });
-      await testSource(cfg, built.test, { validateOnly: true, keepSecretsFrom: body.name });
+      await testSource(cfg, built.test, { validateOnly: true, keepSecretsFrom: built.keeps ? body.name : undefined });
       return { text: replaceSource(text, body.name, built.item), files: built.files };
     });
   },
@@ -157,7 +159,7 @@ const SOURCE_ACTIONS = {
     const { secretKeys } = await sourceTypes(cfg);
     const existing = body.editing ? itemOf((await needSources().read()).text, body.editing) : null;
     const built = buildSource(body.source, { secretKeys, existing });
-    return testSource(cfg, built.test, { configName: body.config_name, keepSecretsFrom: body.editing || undefined });
+    return testSource(cfg, built.test, { configName: body.config_name, keepSecretsFrom: built.keeps ? body.editing : undefined });
   },
 };
 
