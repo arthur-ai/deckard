@@ -112,7 +112,7 @@ scan_once() {
   local run="$1" started t0=$SECONDS status=0
   started="$(now_iso)"
   write_status "$run" running "$started"
-  ./scan-local.sh >"$runner/scan.log" 2>&1 &
+  DECKARD_START=1 ./scan-local.sh >"$runner/scan.log" 2>&1 &
   scan_pid=$!
   wait "$scan_pid" || status=$?
   scan_pid=""
@@ -192,7 +192,7 @@ fi
 docker_v="$(passed docker | sed -n 's/^server \([^,]*\).*/Docker \1/p')"
 mem="$(passed memory | awk '$1 + 0 > 0 { printf "%d GB RAM", $1 / 1024 + 0.5 }')"
 osq="$(passed osquery | sed -n 's/.*version \([^ ]*\).*/osquery \1/p')"
-ok "Machine ready" "$(printf '%s\n' "$docker_v" "$mem" "$osq" | sed '/^$/d' | paste -sd'|' | sed 's/|/ · /g')"
+ok "Machine ready" "$(printf '%s\n' "$docker_v" "$mem" "$osq" | sed '/^$/d' | paste -sd'|' - | sed 's/|/ · /g')"
 [ -z "$extra" ] || printf '%s\n' "$extra" | sed 's/^/  /'
 
 # 2. Scan, in the background, while the viewer starts. Another ./start.sh scanning for the
@@ -232,11 +232,23 @@ else
   ok "Viewer ready" "open $viewer_url/#welcome to add your cloud, MDM and SIEM sources"
 fi
 
-# 4. Wait for this machine's scan.
+# 4. Wait for this machine's scan: a few minutes at most, usually well under one. One still
+#    going after 15 is stuck (osquery waiting on a locked database, a download that
+#    stalled): it is stopped, and reported as failed with the rest.
+FIRST_SCAN_LIMIT=900
 wait_first() {
+  local waited=0
   while [ "$(first_scan)" = running ] || [ -z "$(first_scan)" ]; do
     kill -0 "$serve_pid" 2>/dev/null || return 1
+    if [ "$waited" -ge $((FIRST_SCAN_LIMIT * 2)) ]; then
+      # serve's one child is the scan: stopped, it is recorded as failed, and serve goes
+      # on answering Scan now.
+      pkill -TERM -P "$serve_pid" 2>/dev/null || true
+      echo "Stopped: the scan was still running after $((FIRST_SCAN_LIMIT / 60)) minutes" >>"$runner/scan.log"
+      return 1
+    fi
     sleep 0.5
+    waited=$((waited + 1))
   done
   [ "$(first_scan)" = succeeded ]
 }

@@ -616,10 +616,11 @@ async function loadSources() {
   try {
     const res = await fetch("/api/sources");
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `the viewer answered ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(body.error || `the viewer answered ${res.status}`), { status: res.status });
     state.srcs = { hash: body.hash, sources: body.sources, types: body.source_types, deckard: body.deckard };
   } catch (err) {
-    state.srcs = { error: err.message };
+    // 501: a Deckard release whose control API has no source routes, which waiting won't fix.
+    state.srcs = { error: err.message, unsupported: err.status === 501 };
   }
   // Which sources are configured decides what the stats and Needs attention count, and
   // which agents are no longer reported, too.
@@ -1059,7 +1060,9 @@ function renderWelcomeSources() {
   const added = state.data ? sourceList().filter((s) => s.vendor !== "local") : [];
   let body;
   if (!srcs) body = h("div", { class: "step-status" }, h("span", { class: "spinner", "aria-hidden": "true" }), "Loading…");
-  else if (srcs.error) {
+  else if (srcs.unsupported) {
+    body = h("p", { class: "small muted" }, `${srcs.error}. Add sources to discovery.yaml by hand, or set DECKARD_VERSION in .env to a release that can and run ./start.sh again.`);
+  } else if (srcs.error) {
     // Usually Deckard still starting, which ./start.sh does after the viewer; the reason
     // says when it's something else, as with a Deckard release without the control API.
     body = [
