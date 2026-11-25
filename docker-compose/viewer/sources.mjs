@@ -14,7 +14,15 @@
 //
 // NOTHING TYPED BECOMES A REFERENCE. Deckard reads ${NAME} in a config value as an
 // environment variable, so a value containing "${" is refused: otherwise a source's URL
-// field could be pointed at a host and its token field at ${ELASTIC_PASSWORD}.
+// field could be pointed at a host and its token field at ${ELASTIC_PASSWORD}. A
+// reference the file already has, sent back unchanged, is kept as it is.
+//
+// A TEST OF AN EDITED SOURCE ASKS DECKARD FOR WHAT THE PAGE DOESN'T HAVE. A secret left
+// blank, a field read from a file or an environment variable: the viewer can't send their
+// values, so it sends the field as null (a secret, blank) and names the source as
+// keep_secrets_from, and Deckard fills them from the source it has loaded. Deckard
+// refuses to send a kept secret somewhere new: change a source's URL, CA or TLS check and
+// its secret has to be typed again.
 
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
@@ -150,8 +158,9 @@ export function removeSource(text, name) {
 }
 
 // Checks a form's source and turns it into a sources: item, writing nothing: returns the
-// item, the secret files to write, and the source as the engine tests it (values, not
-// references). `existing` is the item it replaces, if any.
+// item, the secret files to write, the source as the engine tests it (values, not
+// references), and keeps: whether that test needs values from the configured source.
+// `existing` is the item it replaces, if any.
 export function buildSource(form, { secretKeys, existing = null }) {
   if (!form || typeof form !== "object") throw new SourcesError("The source must be an object");
   const name = form.name;
@@ -170,6 +179,11 @@ export function buildSource(form, { secretKeys, existing = null }) {
   const fields = [];
   const files = [];
   const testFields = [];
+  let keeps = false;
+  const keep = (key) => {
+    testFields.push({ key, value: null });
+    keeps = true;
+  };
   const keys = [...new Set([...Object.keys(given), ...before.keys()])];
   for (const key of keys) {
     if (typeof key !== "string" || !/^[a-z0-9_]{1,64}$/i.test(key)) throw new SourcesError(`${key} isn't a field name`);
@@ -184,19 +198,27 @@ export function buildSource(form, { secretKeys, existing = null }) {
         testFields.push({ key, value });
       } else if (before.has(key) && before.get(key) != null && before.get(key) !== "") {
         fields.push({ key, value: before.get(key) });
+        keeps = true;
       }
       continue;
     }
     if (typed && value.includes("${")) {
+      // The reference the file has, as the page was shown it: kept, not typed.
+      if (envRef(before.get(key)) && value.trim() === String(before.get(key)).trim()) {
+        fields.push({ key, value: before.get(key) });
+        keep(key);
+        continue;
+      }
       throw new SourcesError(`${key}: Deckard would read "\${" as an environment variable; remove it`);
     }
     if (typed) {
       fields.push({ key, value: value.trim() });
       testFields.push({ key, value: value.trim() });
     } else if (value == null && before.has(key)) {
-      // Not in the form at all: a field the form doesn't know, kept as it is.
+      // Not in the form at all, or read from a file: kept as it is.
       fields.push({ key, value: before.get(key) });
-      if (!fileRef(before.get(key))) testFields.push({ key, value: before.get(key) });
+      if (fileRef(before.get(key)) || envRef(before.get(key))) keep(key);
+      else testFields.push({ key, value: before.get(key) });
     }
   }
 
@@ -209,6 +231,9 @@ export function buildSource(form, { secretKeys, existing = null }) {
       lookback_window_seconds: Number.isInteger(c.lookback_window_seconds) ? c.lookback_window_seconds : prior?.lookback_window_seconds ?? 86400,
     };
     if (!config.name) throw new SourcesError("Each config needs a name");
+    if (config.query_language !== "none" && typeof config.query === "string" && !config.query.trim()) {
+      throw new SourcesError(`config ${config.name}: a ${config.query_language} source needs a query that lists its agents`);
+    }
     if (typeof config.query === "string" && config.query.includes("${")) {
       throw new SourcesError(`config ${config.name}: Deckard would read "\${" in its query as an environment variable`);
     }
@@ -222,7 +247,7 @@ export function buildSource(form, { secretKeys, existing = null }) {
     fields: testFields,
     configs: configs.map((c) => ({ ...c, query: fileRef(c.query) ? "" : c.query })),
   };
-  return { item, files, test };
+  return { item, files, test, keeps };
 }
 
 // Reads and writes the real files, one change at a time.

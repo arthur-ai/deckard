@@ -61,16 +61,22 @@ curl -s -u elastic:changeme 'localhost:9200/_query?format=txt' \
   Elasticsearch, only to the viewer's own few questions about Deckard's events.
 - **Add source** and **Edit** write `discovery.yaml` and `secrets/`, which the viewer has
   mounted writable. Anyone who can load `localhost:7493` can add, change and test sources,
-  and a test of an edited source can use the secrets it already has. So the same rules as
-  Scan now apply: the viewer accepts a change only from its own page loaded as
-  `localhost`. A value containing `${` is refused, so a form can't make Deckard read an
-  environment variable into a source.
+  and a test of an edited source can use the secrets it already has, though Deckard sends
+  them only where the source already sends them: change its URL, CA or TLS check and the
+  secret must be typed again. So the same rules as Scan now apply: the viewer accepts a
+  change only from its own page loaded as `localhost`. A value containing `${` is refused,
+  so a form can't make Deckard read an environment variable into a source.
 - **Scan now** goes from the viewer to Deckard's control API on port 7494, which only
-  Compose's private network can reach and which needs the token. That API can only bring a
-  configured scan forward: it takes no config, credentials or destination, and a source
+  Compose's private network can reach and which needs the token. That API brings a
+  configured scan forward, applies `discovery.yaml` now, and runs Test Connection with the
+  values a form sends; it never changes the config or the destination, and a source
   already scanning isn't started twice. The viewer accepts the request only from its own
   page loaded as `localhost`, so another website you visit can't send it. A Deckard release
   without the control API shows no buttons, and says why on the Sources tab.
+- The `localhost` and own-page checks stop browsers, not programs. Anything running on
+  this machine can send whatever Host and Origin it likes, so on a machine other people
+  log in to, anyone who can reach port 7493 can add, change, test and scan sources. Run
+  Deckard there only if you'd give them that.
 - One password, `ELASTIC_PASSWORD` in `.env` (`changeme` if unset), is used for `elastic`,
   `deckard` and `deckard_viewer`. Set your own and `docker compose up -d` again.
 - The events are kept in the `elasticsearch-data` volume. `docker compose down -v` deletes
