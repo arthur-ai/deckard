@@ -1,6 +1,6 @@
-// The viewer's page. What Deckard found comes from /api/overview, and where its scans stand
-// from /api/scans; everything Deckard sent is text from a scanned machine or cloud, so it
-// only ever reaches the page as text nodes.
+// The viewer's page. What Deckard found, agents and MCP servers, comes from /api/overview,
+// and where its scans stand from /api/scans; everything Deckard sent is text from a scanned
+// machine or cloud, so it only ever reaches the page as text nodes.
 
 const REFRESH_MS = 60_000;
 const REFRESH_EMPTY_MS = 15_000;
@@ -10,16 +10,21 @@ const SCAN_POLL_MS = 4_000;
 // Sources whose scan reads a file another tool writes: scanning again reads the same file.
 const RESCAN_ELSEWHERE = { local: "./scan-local.sh && docker compose restart deckard" };
 const ACTIVE = new Set(["running", "waiting", "stopping"]);
+const TABS = ["agents", "mcp", "sources"];
 
 const state = {
   data: null,
-  tab: location.hash === "#sources" ? "sources" : "agents",
+  tab: TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "agents",
   status: "current",
   kind: "",
   source: "",
   q: "",
   sort: { key: "name", dir: 1 },
+  // The MCP servers tab's own search, filters and sort.
+  mcp: { status: "current", detection: "", source: "", q: "", sort: { key: "name", dir: 1 } },
+  // What the drawer shows: the key of an agent, or of an MCP server when openKind says so.
   open: null,
+  openKind: "agent",
   loading: false,
   // Deckard's own view of its scans: { available, reason, list }.
   scans: { available: false, reason: null, list: [] },
@@ -137,8 +142,9 @@ function isConfigured(src) {
   return true;
 }
 
-// An agent's status, with every agent of a removed source no longer reported: nothing
-// scans for it any more. Elasticsearch's answer can't know that, so the page decides it.
+// An agent's status, or an MCP server's, with everything a removed source found no longer
+// reported: nothing scans for it any more. Elasticsearch's answer can't know that, so the
+// page decides it.
 const removedSource = (a) => !isConfigured(a.source);
 const statusOf = (a) => (removedSource(a) ? "gone" : a.status);
 const isCurrent = (a) => statusOf(a) !== "gone";
@@ -155,21 +161,42 @@ function statusBadges(a) {
   return out;
 }
 
+/* MCP servers */
+
+const servers = () => state.data?.mcp_servers ?? [];
+// How a source knows a server is there, in words. A value this page doesn't know is shown
+// as the source sent it.
+const DETECTION = {
+  called: ["Called", "Tool calls to it were seen passing through a gateway"],
+  registered: ["Registered", "It is in a gateway's or a registry's own list of servers, called or not"],
+};
+const detectionLabel = (d) => DETECTION[d]?.[0] ?? d ?? "—";
+const toolNames = (m) => (m.mcp_server.tools ?? []).map((t) => t?.name).filter(Boolean);
+const usedBy = (m) => m.mcp_server.used_by ?? [];
+// The agent an MCP server's used_by names: the same external ID, from the same source.
+const agentUsing = (m, externalId) => state.data.agents.find((a) => a.source.id === m.source.id && a.external_id === externalId);
+const serversUsedBy = (a) => servers().filter((m) => m.source.id === a.source.id && usedBy(m).includes(a.external_id));
+
 /* Rendering */
 
 function renderStats() {
   const { agents } = state.data;
   const sources = configuredSources();
   const current = agents.filter(isCurrent).length;
-  const fresh = agents.filter((a) => a.is_new && isCurrent(a)).length;
-  const gone = agents.filter((a) => statusOf(a) === "gone").length;
+  // New and no longer reported count MCP servers with the agents: neither tile names one.
+  const found = [...agents, ...servers()];
+  const fresh = found.filter((a) => a.is_new && isCurrent(a)).length;
+  const gone = found.filter((a) => statusOf(a) === "gone").length;
   const failing = sources.filter((s) => s.last_scan?.succeeded === false).length;
   const coverage = sources.map((s) => s.last_scan?.device_coverage).filter(Boolean);
   const unreadable = coverage.reduce((n, c) => n + (c.devices_unreadable ?? 0), 0);
 
+  const mcp = servers().filter(isCurrent).length;
+
   const stat = (value, label, cls) => h("div", { class: `stat ${cls || ""}` }, h("div", { class: "value" }, value), h("div", { class: "label" }, label));
   fill($("stats"), 
     stat(current.toLocaleString(), current === 1 ? "AI agent found" : "AI agents found"),
+    servers().length ? stat(mcp.toLocaleString(), mcp === 1 ? "MCP server found" : "MCP servers found") : null,
     stat(fresh.toLocaleString(), "new in the last 7 days", fresh ? "new" : ""),
     stat(gone.toLocaleString(), "no longer reported"),
     stat(failing ? `${failing} of ${sources.length}` : `${sources.length}`,
@@ -217,6 +244,18 @@ function renderAttention() {
   }
   if (fresh.length > NEW_SHOWN) {
     items.push([h("span", { class: "badge new" }, "New agents"), h("span", { class: "what muted" }, `and ${fresh.length - NEW_SHOWN} more in the last 7 days`)]);
+  }
+
+  const freshServers = servers().filter((m) => m.is_new && isCurrent(m)).sort((x, y) => Date.parse(y.first_seen) - Date.parse(x.first_seen));
+  for (const m of freshServers.slice(0, NEW_SHOWN)) {
+    const users = usedBy(m).length;
+    items.push([h("span", { class: "badge new" }, "New MCP server"),
+      h("span", { class: "what" }, h("a", { onclick: () => openServer(m.key) }, m.name), ` from ${m.source.name ?? m.source.id}`,
+        users ? `, used by ${plural(users, "agent")}` : "",
+        h("span", { class: "muted" }, ` · first seen ${ago(m.first_seen)}`))]);
+  }
+  if (freshServers.length > NEW_SHOWN) {
+    items.push([h("span", { class: "badge new" }, "New MCP servers"), h("span", { class: "what muted" }, `and ${freshServers.length - NEW_SHOWN} more in the last 7 days`)]);
   }
 
   const box = $("attention");
@@ -274,7 +313,7 @@ function visibleAgents() {
 function renderAgents() {
   const rows = visibleAgents();
   $("count-agents").textContent = state.data.agents.filter(isCurrent).length.toLocaleString();
-  for (const th of document.querySelectorAll("th[data-sort]")) {
+  for (const th of document.querySelectorAll("table.agents th[data-sort]")) {
     th.setAttribute("aria-sort", th.dataset.sort === state.sort.key ? (state.sort.dir > 0 ? "ascending" : "descending") : "none");
   }
   fill($("agents-body"), ...rows.map((a) => {
@@ -301,6 +340,83 @@ function renderAgents() {
     if (state.data.agents.length) empty.textContent = "No agents match these filters.";
     else if (state.data.sources.length) empty.textContent = "Deckard's scans haven't found any AI agents.";
     else empty.textContent = "Waiting for Deckard's first scan. It scans when it starts, so agents show here within a minute or so; this page refreshes itself.";
+  }
+}
+
+function renderMcpFilters() {
+  const found = [...new Set(servers().map((m) => m.mcp_server.detection).filter(Boolean))].sort();
+  fillSelect($("mcp-filter-detection"), found.map((d) => [d, detectionLabel(d)]), "However found");
+  const sources = new Map(servers().map((m) => [m.source.id, m.source.name ?? m.source.id]));
+  fillSelect($("mcp-filter-source"), [...sources].sort((x, y) => x[1].localeCompare(y[1])), "Every source");
+  state.mcp.detection = $("mcp-filter-detection").value;
+  state.mcp.source = $("mcp-filter-source").value;
+}
+
+function mcpSortValue(m, key) {
+  switch (key) {
+    case "detection": return m.mcp_server.detection ?? "";
+    case "tools": return toolNames(m).length;
+    case "used_by": return usedBy(m).length;
+    case "source": return (m.source.name ?? "").toLowerCase();
+    case "first_seen": return Date.parse(m.first_seen) || 0;
+    case "last_seen": return Date.parse(m.last_seen) || 0;
+    default: return m.name.toLowerCase();
+  }
+}
+
+function visibleServers() {
+  const f = state.mcp;
+  const q = f.q.trim().toLowerCase();
+  return servers()
+    .filter((m) => f.status === "all" || (f.status === "gone" ? statusOf(m) === "gone" : isCurrent(m)))
+    .filter((m) => !f.detection || m.mcp_server.detection === f.detection)
+    .filter((m) => !f.source || m.source.id === f.source)
+    .filter((m) => {
+      if (!q) return true;
+      return [m.name, m.external_id, m.source.name, detectionLabel(m.mcp_server.detection), ...toolNames(m), ...usedBy(m)]
+        .some((v) => v && String(v).toLowerCase().includes(q));
+    })
+    .sort((x, y) => {
+      const a = mcpSortValue(x, f.sort.key);
+      const b = mcpSortValue(y, f.sort.key);
+      return (a < b ? -1 : a > b ? 1 : 0) * f.sort.dir || x.name.localeCompare(y.name);
+    });
+}
+
+function renderMcp() {
+  const rows = visibleServers();
+  $("count-mcp").textContent = servers().filter(isCurrent).length.toLocaleString();
+  for (const th of document.querySelectorAll("table.servers th[data-sort]")) {
+    th.setAttribute("aria-sort", th.dataset.sort === state.mcp.sort.key ? (state.mcp.sort.dir > 0 ? "ascending" : "descending") : "none");
+  }
+  const dash = () => h("span", { class: "muted" }, "—");
+  fill($("mcp-body"), ...rows.map((m) => {
+    const d = m.mcp_server.detection;
+    const tools = toolNames(m).length;
+    const users = usedBy(m).length;
+    return h("tr", {
+      class: statusOf(m) === "gone" ? "gone" : "",
+      tabindex: "0",
+      onclick: () => openServer(m.key),
+      onkeydown: (e) => { if (e.key === "Enter") openServer(m.key); },
+    },
+      h("td", { class: "name" }, m.name, statusBadges(m)),
+      h("td", {}, d ? h("span", { title: DETECTION[d]?.[1] }, detectionLabel(d)) : dash()),
+      // Left out by a source that can't see them, which isn't the same as none.
+      h("td", { class: "num" }, tools ? tools.toLocaleString() : h("span", { class: "muted", title: "This source didn't report any tools for it" }, "—")),
+      h("td", { class: "num" }, users ? plural(users, "agent") : h("span", { class: "muted", title: "This source can't tell which agents use it" }, "—")),
+      h("td", {}, m.source.name ?? m.source.id, m.source.vendor ? h("div", { class: "sub" }, m.source.vendor) : null),
+      h("td", { class: "when" }, when(m.first_seen)),
+      h("td", { class: "when" }, when(m.last_seen)),
+    );
+  }));
+  const empty = $("mcp-empty");
+  empty.hidden = rows.length > 0;
+  document.querySelector("#panel-mcp .table-wrap").hidden = !rows.length;
+  if (!rows.length) {
+    empty.textContent = servers().length
+      ? "No MCP servers match these filters."
+      : "No MCP servers found yet. Deckard reports them from sources that can see them, such as a LiteLLM proxy, and needs a release that sends them.";
   }
 }
 
@@ -417,6 +533,7 @@ function renderSources() {
     const scan = scanOf(s);
     const scanError = state.scanErrors.get(s.key);
     const agentsHere = state.data.agents.filter((a) => a.source.id === s.id && a.source.config_name === s.config_name && isCurrent(a)).length;
+    const serversHere = servers().filter((m) => m.source.id === s.id && m.source.config_name === s.config_name && isCurrent(m)).length;
     let pill;
     if (s.pending) pill = h("span", { class: "badge", title: "Saved in discovery.yaml; Deckard starts scanning it within a few seconds" }, "Starting…");
     else if (s.unseen) pill = h("span", { class: "badge" }, ACTIVE.has(scan?.status) ? "First scan" : "Not scanned yet");
@@ -434,7 +551,10 @@ function renderSources() {
         ["Last scan", ls ? when(ls.at) : "—"],
         ls && ["Took", duration(ls.started_at, ls.finished_at)],
         ["Agents now", agentsHere.toLocaleString()],
-        ls && ["Sent last scan", ls.records_published ?? "—"],
+        (serversHere || ls?.mcp_servers_published) && ["MCP servers now", serversHere.toLocaleString()],
+        ls && ["Sent last scan", ls.mcp_servers_published
+          ? `${plural(ls.records_published ?? 0, "agent")}, ${plural(ls.mcp_servers_published, "MCP server")}`
+          : (ls.records_published ?? "—")],
         ["Scans", s.failed_scans ? `${s.scans.toLocaleString()} (${s.failed_scans.toLocaleString()} failed)` : s.scans.toLocaleString()],
         s.last_success_at && ls && !ls.succeeded && ["Last success", when(s.last_success_at)],
         scan && scan.status === "scheduled" && scan.next_due_at && ["Next scan", h("span", { title: exact(scan.next_due_at) }, until(scan.next_due_at))],
@@ -480,7 +600,7 @@ function tickBars(recent) {
     const cls = r.succeeded === false ? "tick bad" : r.succeeded ? "tick" : "tick unknown";
     const label = r.succeeded === false
       ? `${exact(r.at)}: failed, ${r.error_code ?? "error"}`
-      : `${exact(r.at)}: ${plural(r.records_published ?? 0, "agent")} sent`;
+      : `${exact(r.at)}: ${plural(r.records_published ?? 0, "agent")}${r.mcp_servers_published ? ` and ${plural(r.mcp_servers_published, "MCP server")}` : ""} sent`;
     const el = h("div", { class: cls, title: label, "aria-label": label });
     el.style.height = r.succeeded === false ? "100%" : `${Math.max(18, ((r.records_published ?? 0) / max) * 100)}%`;
     return el;
@@ -491,6 +611,13 @@ function tickBars(recent) {
 
 function openAgent(key) {
   state.open = key;
+  state.openKind = "agent";
+  renderDrawer();
+}
+
+function openServer(key) {
+  state.open = key;
+  state.openKind = "mcp";
   renderDrawer();
 }
 
@@ -500,7 +627,93 @@ function closeAgent() {
   if (!state.editor) $("scrim").hidden = true;
 }
 
-async function renderDrawer() {
+function renderDrawer() {
+  return state.openKind === "mcp" ? renderServerDrawer() : renderAgentDrawer();
+}
+
+const kv = (pairs) => h("dl", { class: "kv" }, pairs
+  .filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && !v.length))
+  .map(([k, v]) => [h("dt", {}, k), h("dd", {}, Array.isArray(v) ? h("div", { class: "chips" }, v.map((x) => h("span", { class: "badge" }, x))) : v)]));
+
+// The drawer's last two sections, the same for an agent and an MCP server: when it was
+// seen, and everything the source sent. sightings is filled in once the viewer answers.
+function seenSections(x, record, sightings) {
+  const raw = JSON.stringify(record, null, 2);
+  const copy = h("button", { type: "button", onclick: async () => {
+    try { await navigator.clipboard.writeText(raw); copy.textContent = "Copied"; } catch { copy.textContent = "Copy failed"; }
+    setTimeout(() => { copy.textContent = "Copy JSON"; }, 1500);
+  } }, "Copy JSON");
+  return [
+    h("section", {}, h("h3", {}, "Seen"), kv([
+      ["First seen", h("span", { title: exact(x.first_seen) }, `${ago(x.first_seen)} · ${exact(x.first_seen)}`)],
+      ["Last seen", h("span", { title: exact(x.last_seen) }, `${ago(x.last_seen)} · ${exact(x.last_seen)}`)],
+      ["Source last saw it", record.last_seen ? h("span", { title: exact(record.last_seen) }, ago(record.last_seen)) : null],
+      ["Source", [x.source.name, x.source.vendor, x.source.config_name].filter(Boolean).join(" · ")],
+    ]), sightings),
+    h("section", {}, h("details", {}, h("summary", {}, "Everything the source reported"), h("pre", { class: "raw" }, raw), h("div", { class: "row-actions" }, copy))),
+  ];
+}
+
+// Says how often x was reported, once the viewer has counted. kind is what x is to
+// /api/sightings: "agent" or "mcp_server".
+async function fillSightings(el, x, kind) {
+  try {
+    const res = await fetch(`/api/sightings?${new URLSearchParams({ source_id: x.source.id, external_id: x.external_id, kind })}`);
+    if (!res.ok || state.open !== x.key) return;
+    const s = await res.json();
+    if (s.times.length > 1) {
+      const gaps = s.times.slice(0, -1).map((t, i) => Date.parse(t) - Date.parse(s.times[i + 1])).filter((g) => g > 0).sort((x, y) => x - y);
+      const typical = gaps[Math.floor(gaps.length / 2)];
+      el.textContent = `Reported in ${plural(s.total, "scan")}, about every ${typical >= 3_600_000 ? `${Math.round(typical / 3_600_000)} h` : `${Math.max(1, Math.round(typical / 60_000))} min`}.`;
+    }
+  } catch {
+    // The count from the overview stays.
+  }
+}
+
+async function renderServerDrawer() {
+  const m = servers().find((x) => x.key === state.open);
+  if (!m) return closeAgent();
+  const record = m.mcp_server;
+  const d = record.detection;
+  $("drawer").hidden = false;
+  $("scrim").hidden = false;
+  $("drawer-title").textContent = m.name;
+  fill($("drawer-badges"),
+    ...statusBadges(m),
+    h("span", { class: "badge accent" }, "MCP server"),
+    d ? h("span", { class: "badge", title: DETECTION[d]?.[1] }, detectionLabel(d)) : null,
+    record.runs_on ? h("span", { class: "badge" }, RUNS_ON[record.runs_on] ?? record.runs_on) : null,
+  );
+
+  const users = usedBy(m);
+  const tools = toolNames(m);
+  const sightings = h("p", { class: "muted" }, `Reported in ${plural(m.sightings, "scan")}.`);
+  fill($("drawer-body"),
+    h("section", {}, h("h3", {}, "What it is"), kv([
+      ["How found", d ? h("span", { class: "prose" }, `${detectionLabel(d)}${DETECTION[d] ? `: ${DETECTION[d][1].toLowerCase()}` : ""}`) : null],
+      ["Runs on", record.runs_on ? (RUNS_ON[record.runs_on] ?? record.runs_on) : null],
+      ["External ID", h("span", { class: "mono" }, m.external_id)],
+    ])),
+    h("section", {}, h("h3", {}, "Used by"),
+      users.length
+        ? h("ul", { class: "link-list" }, users.map((id) => {
+            const a = agentUsing(m, id);
+            // An agent this page doesn't hold: read before this scan's agents were, or
+            // from a source whose agents went elsewhere.
+            return h("li", {}, a ? h("a", { onclick: () => openAgent(a.key) }, a.name) : h("span", { class: "mono" }, id));
+          }))
+        : h("p", { class: "muted" }, "This source can't tell which agents use it. That isn't the same as no agent using it.")),
+    h("section", {}, h("h3", {}, `Tools${tools.length ? ` (${tools.length.toLocaleString()})` : ""}`),
+      tools.length
+        ? h("div", { class: "chips" }, tools.map((t) => h("span", { class: "badge" }, t)))
+        : h("p", { class: "muted" }, "This source didn't report any tools for it.")),
+    ...seenSections(m, record, sightings),
+  );
+  fillSightings(sightings, m, "mcp_server");
+}
+
+async function renderAgentDrawer() {
   const a = state.data?.agents.find((x) => x.key === state.open);
   if (!a) return closeAgent();
   const f = facts(a);
@@ -514,16 +727,8 @@ async function renderDrawer() {
     f.runsOn ? h("span", { class: "badge" }, RUNS_ON[f.runsOn] ?? f.runsOn) : null,
   );
 
-  const kv = (pairs) => h("dl", { class: "kv" }, pairs
-    .filter(([, v]) => v != null && v !== "" && !(Array.isArray(v) && !v.length))
-    .map(([k, v]) => [h("dt", {}, k), h("dd", {}, Array.isArray(v) ? h("div", { class: "chips" }, v.map((x) => h("span", { class: "badge" }, x))) : v)]));
-
   const sightings = h("p", { class: "muted" }, `Reported in ${plural(a.sightings, "scan")}.`);
-  const raw = JSON.stringify(a.agent, null, 2);
-  const copy = h("button", { type: "button", onclick: async () => {
-    try { await navigator.clipboard.writeText(raw); copy.textContent = "Copied"; } catch { copy.textContent = "Copy failed"; }
-    setTimeout(() => { copy.textContent = "Copy JSON"; }, 1500);
-  } }, "Copy JSON");
+  const uses = serversUsedBy(a);
 
   fill($("drawer-body"), 
     h("section", {}, h("h3", {}, "Where it is"), kv([
@@ -552,27 +757,14 @@ async function renderDrawer() {
             h("thead", {}, h("tr", {}, h("th", {}, "Kind"), h("th", {}, "Path"), h("th", {}, "Version"))),
             h("tbody", {}, obs.occurrences.map((o) => h("tr", {}, h("td", {}, o.kind ?? "—"), h("td", { class: "mono" }, tilde(o.path) ?? "—"), h("td", {}, o.version ?? "—"))))))
       : null,
-    h("section", {}, h("h3", {}, "Seen"), kv([
-      ["First seen", h("span", { title: exact(a.first_seen) }, `${ago(a.first_seen)} · ${exact(a.first_seen)}`)],
-      ["Last seen", h("span", { title: exact(a.last_seen) }, `${ago(a.last_seen)} · ${exact(a.last_seen)}`)],
-      ["Source last saw it", a.agent.last_seen ? h("span", { title: exact(a.agent.last_seen) }, ago(a.agent.last_seen)) : null],
-      ["Source", [a.source.name, a.source.vendor, a.source.config_name].filter(Boolean).join(" · ")],
-    ]), sightings),
-    h("section", {}, h("details", {}, h("summary", {}, "Everything the source reported"), h("pre", { class: "raw" }, raw), h("div", { class: "row-actions" }, copy))),
+    uses.length
+      ? h("section", {}, h("h3", {}, "MCP servers it uses"),
+          h("ul", { class: "link-list" }, uses.map((m) => h("li", {}, h("a", { onclick: () => openServer(m.key) }, m.name),
+            toolNames(m).length ? h("span", { class: "muted" }, ` · ${plural(toolNames(m).length, "tool")}`) : null))))
+      : null,
+    ...seenSections(a, a.agent, sightings),
   );
-
-  try {
-    const res = await fetch(`/api/sightings?${new URLSearchParams({ source_id: a.source.id, external_id: a.external_id })}`);
-    if (!res.ok || state.open !== a.key) return;
-    const s = await res.json();
-    if (s.times.length > 1) {
-      const gaps = s.times.slice(0, -1).map((t, i) => Date.parse(t) - Date.parse(s.times[i + 1])).filter((g) => g > 0).sort((x, y) => x - y);
-      const typical = gaps[Math.floor(gaps.length / 2)];
-      sightings.textContent = `Reported in ${plural(s.total, "scan")}, about every ${typical >= 3_600_000 ? `${Math.round(typical / 3_600_000)} h` : `${Math.max(1, Math.round(typical / 60_000))} min`}.`;
-    }
-  } catch {
-    // The count from the overview stays.
-  }
+  fillSightings(sightings, a, "agent");
 }
 
 
@@ -611,7 +803,7 @@ async function loadSources() {
   }
   // Which sources are configured decides what the stats and Needs attention count, and
   // which agents are no longer reported, too.
-  if (state.data) { renderStats(); renderAttention(); renderAgents(); }
+  if (state.data) { renderStats(); renderAttention(); renderAgents(); renderMcp(); }
   renderSources();
 }
 
@@ -881,10 +1073,9 @@ function showToast(text) {
 
 function setTab(tab) {
   state.tab = tab;
-  history.replaceState(null, "", tab === "sources" ? "#sources" : "#agents");
+  history.replaceState(null, "", `#${tab}`);
   for (const b of document.querySelectorAll("[data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
-  $("panel-agents").hidden = tab !== "agents";
-  $("panel-sources").hidden = tab !== "sources";
+  for (const t of TABS) $(`panel-${t}`).hidden = t !== tab;
 }
 
 function render() {
@@ -893,6 +1084,8 @@ function render() {
   renderAttention();
   renderFilters();
   renderAgents();
+  renderMcpFilters();
+  renderMcp();
   renderSources();
   if (state.open) renderDrawer();
 }
@@ -917,7 +1110,7 @@ async function load() {
     banner.hidden = true;
     if (body.truncated) {
       banner.hidden = false;
-      banner.textContent = "There are more agents than the viewer reads at once; some aren't shown.";
+      banner.textContent = "There are more agents or MCP servers than the viewer reads at once; some aren't shown.";
     }
     render();
   } catch (err) {
@@ -926,7 +1119,7 @@ async function load() {
   } finally {
     state.loading = false;
     $("refresh").disabled = false;
-    const empty = !state.data || (!state.data.agents.length && !state.data.sources.length);
+    const empty = !state.data || (!state.data.agents.length && !servers().length && !state.data.sources.length);
     timer = setTimeout(load, empty ? REFRESH_EMPTY_MS : REFRESH_MS);
     showUpdated();
   }
@@ -975,16 +1168,30 @@ function wire() {
   $("search").addEventListener("input", (e) => { state.q = e.target.value; renderAgents(); });
   $("filter-kind").addEventListener("change", (e) => { state.kind = e.target.value; renderAgents(); });
   $("filter-source").addEventListener("change", (e) => { state.source = e.target.value; renderAgents(); });
-  for (const th of document.querySelectorAll("th[data-sort]")) {
-    th.tabIndex = 0;
-    const sort = () => {
-      const key = th.dataset.sort;
-      const dates = key === "first_seen" || key === "last_seen";
-      state.sort = state.sort.key === key ? { key, dir: -state.sort.dir } : { key, dir: dates ? -1 : 1 };
-      renderAgents();
-    };
-    th.addEventListener("click", sort);
-    th.addEventListener("keydown", (e) => { if (e.key === "Enter") sort(); });
+  for (const b of document.querySelectorAll("[data-mcp-status]")) {
+    b.addEventListener("click", () => {
+      state.mcp.status = b.dataset.mcpStatus;
+      for (const x of document.querySelectorAll("[data-mcp-status]")) x.setAttribute("aria-pressed", String(x === b));
+      renderMcp();
+    });
+  }
+  $("mcp-search").addEventListener("input", (e) => { state.mcp.q = e.target.value; renderMcp(); });
+  $("mcp-filter-detection").addEventListener("change", (e) => { state.mcp.detection = e.target.value; renderMcp(); });
+  $("mcp-filter-source").addEventListener("change", (e) => { state.mcp.source = e.target.value; renderMcp(); });
+  // Each table sorts on its own: which state holds its sort, and what redraws it.
+  for (const [table, held, redraw] of [["agents", state, renderAgents], ["servers", state.mcp, renderMcp]]) {
+    for (const th of document.querySelectorAll(`table.${table} th[data-sort]`)) {
+      th.tabIndex = 0;
+      const sort = () => {
+        const key = th.dataset.sort;
+        // Newest first for a date, most first for a count.
+        const descending = ["first_seen", "last_seen", "tools", "used_by"].includes(key);
+        held.sort = held.sort.key === key ? { key, dir: -held.sort.dir } : { key, dir: descending ? -1 : 1 };
+        redraw();
+      };
+      th.addEventListener("click", sort);
+      th.addEventListener("keydown", (e) => { if (e.key === "Enter") sort(); });
+    }
   }
   $("drawer-close").addEventListener("click", closeAgent);
   $("editor-close").addEventListener("click", closeEditor);

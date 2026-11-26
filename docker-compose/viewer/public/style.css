@@ -365,6 +365,10 @@ td.where { max-width: 360px; word-break: break-all; }
 .kv dt { color: var(--muted); font-size: 12.5px; }
 .kv dd { margin: 0; word-break: break-all; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.link-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.link-list a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+td.num { font-variant-numeric: tabular-nums; }
+.kv dd .prose { word-break: normal; }
 pre.raw {
   background: var(--surface-2);
   border-radius: 8px;
@@ -388,7 +392,10 @@ details summary { cursor: pointer; font-weight: 600; }
   table.agents th:nth-child(2), table.agents td:nth-child(2),
   table.agents th:nth-child(4), table.agents td:nth-child(4),
   table.agents th:nth-child(5), table.agents td:nth-child(5),
-  table.agents th:nth-child(6), table.agents td:nth-child(6) { display: none; }
+  table.agents th:nth-child(6), table.agents td:nth-child(6),
+  table.servers th:nth-child(3), table.servers td:nth-child(3),
+  table.servers th:nth-child(5), table.servers td:nth-child(5),
+  table.servers th:nth-child(6), table.servers td:nth-child(6) { display: none; }
   th, td { padding: 10px 10px; }
   .kv { grid-template-columns: 1fr; gap: 2px; }
   .kv dd { margin-bottom: 8px; }
