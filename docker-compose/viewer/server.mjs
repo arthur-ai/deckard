@@ -2,8 +2,9 @@
 // the Elasticsearch it sends to. No dependencies beyond Node itself.
 //
 //   GET /                 the page
-//   GET /api/overview     every agent and every source, shaped for the page
-//   GET /api/sightings    the scans one agent was reported in (?source_id=&external_id=)
+//   GET /api/overview     every agent, MCP server and source, shaped for the page
+//   GET /api/sightings    the scans one agent or MCP server was reported in
+//                         (?source_id=&external_id=, and &kind=mcp_server for a server)
 //   GET /api/health       200 once Elasticsearch answers the viewer's user
 //   GET /api/scans        where each of Deckard's scans stands, from Deckard's control API
 //   POST /api/scans/run   ask Deckard to scan one source now ({source_id, config_name})
@@ -207,10 +208,12 @@ async function handle(req, res) {
   if (url.pathname === "/api/sightings") {
     const sourceId = url.searchParams.get("source_id");
     const externalId = url.searchParams.get("external_id");
+    const kind = url.searchParams.get("kind") ?? "agent";
     if (!sourceId || !externalId || sourceId.length > 1024 || externalId.length > 4096) {
       return json(res, 400, { error: "source_id and external_id are required" });
     }
-    return json(res, 200, await sightings(cfg, sourceId, externalId));
+    if (kind !== "agent" && kind !== "mcp_server") return json(res, 400, { error: "kind is agent or mcp_server" });
+    return json(res, 200, await sightings(cfg, sourceId, externalId, kind));
   }
   if (url.pathname === "/api/scans") return json(res, 200, await scans(cfg));
   if (url.pathname === "/api/sources") return json(res, 200, await listSources());

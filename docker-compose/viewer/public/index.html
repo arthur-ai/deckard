@@ -18,7 +18,7 @@
       <img src="/owl.svg" alt="" width="31" height="32">
       <div>
         <h1>Deckard</h1>
-        <p class="muted">AI agents found across your sources</p>
+        <p class="muted">AI agents and MCP servers found across your sources</p>
       </div>
     </div>
     <div class="refresh">
@@ -34,6 +34,7 @@
 
     <nav class="tabs" role="tablist">
       <button role="tab" id="tab-agents" data-tab="agents" aria-selected="true">Agents <span class="count" id="count-agents"></span></button>
+      <button role="tab" id="tab-mcp" data-tab="mcp" aria-selected="false">MCP servers <span class="count" id="count-mcp"></span></button>
       <button role="tab" id="tab-sources" data-tab="sources" aria-selected="false">Sources <span class="count" id="count-sources"></span></button>
     </nav>
 
@@ -67,6 +68,36 @@
       <p id="agents-empty" class="empty" hidden></p>
     </section>
 
+    <section id="panel-mcp" role="tabpanel" aria-labelledby="tab-mcp" hidden>
+      <div class="toolbar">
+        <input id="mcp-search" type="search" placeholder="Search name, tool, ID…" aria-label="Search MCP servers">
+        <div class="segmented" role="group" aria-label="Status">
+          <button type="button" data-mcp-status="current" aria-pressed="true">Current</button>
+          <button type="button" data-mcp-status="gone" aria-pressed="false">No longer reported</button>
+          <button type="button" data-mcp-status="all" aria-pressed="false">All</button>
+        </div>
+        <select id="mcp-filter-detection" aria-label="How found"><option value="">However found</option></select>
+        <select id="mcp-filter-source" aria-label="Source"><option value="">Every source</option></select>
+      </div>
+      <div class="table-wrap">
+        <table class="servers">
+          <thead>
+            <tr>
+              <th data-sort="name" aria-sort="ascending">MCP server</th>
+              <th data-sort="detection">How found</th>
+              <th data-sort="tools">Tools</th>
+              <th data-sort="used_by">Used by</th>
+              <th data-sort="source">Source</th>
+              <th data-sort="first_seen">First seen</th>
+              <th data-sort="last_seen">Last seen</th>
+            </tr>
+          </thead>
+          <tbody id="mcp-body"></tbody>
+        </table>
+      </div>
+      <p id="mcp-empty" class="empty" hidden></p>
+    </section>
+
     <section id="panel-sources" role="tabpanel" aria-labelledby="tab-sources" hidden>
       <div class="sources-bar">
         <p id="scans-note" class="small muted scans-note" hidden></p>
@@ -78,7 +109,7 @@
     </section>
   </main>
 
-  <aside id="drawer" class="drawer" hidden aria-label="Agent details">
+  <aside id="drawer" class="drawer" hidden aria-label="Details">
     <div class="drawer-head">
       <div>
         <h2 id="drawer-title"></h2>

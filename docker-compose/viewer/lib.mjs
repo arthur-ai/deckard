@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 
 const AGENT = "arthur.discovery.agent";
+const MCP_SERVER = "arthur.discovery.mcp_server";
 const OUTCOME = "arthur.discovery.scan_outcome";
 // Composite aggregations are paged; this many pages of PAGE buckets is the most it reads.
 const PAGE = 500;
@@ -102,31 +103,37 @@ async function compositeBuckets(cfg, body, call) {
   return { buckets: out, truncated: true };
 }
 
-export function agentsQuery() {
+// One bucket per thing found: the same external_id from the same source.id, with when it
+// was first and last reported and the latest event. field is where the event holds it.
+function foundQuery(eventType, field) {
   return {
     size: 0,
     track_total_hits: false,
-    query: { bool: { filter: [{ term: { event_type: AGENT } }] } },
+    query: { bool: { filter: [{ term: { event_type: eventType } }] } },
     aggs: {
       c: {
         composite: {
           size: PAGE,
           sources: [
             { source_id: { terms: { field: "source.id" } } },
-            { external_id: { terms: { field: "agent.external_id" } } },
+            { external_id: { terms: { field: `${field}.external_id` } } },
           ],
         },
         aggs: {
           first: { min: { field: "@timestamp" } },
           last: { max: { field: "@timestamp" } },
           latest: {
-            top_hits: { size: 1, sort: [{ "@timestamp": "desc" }], _source: { includes: ["agent", "source", "@timestamp"] } },
+            top_hits: { size: 1, sort: [{ "@timestamp": "desc" }], _source: { includes: [field, "source", "@timestamp"] } },
           },
         },
       },
     },
   };
 }
+
+export const agentsQuery = () => foundQuery(AGENT, "agent");
+// MCP servers are events of their own type, from a Deckard release that reports them.
+export const mcpServersQuery = () => foundQuery(MCP_SERVER, "mcp_server");
 
 export function sourcesQuery() {
   return {
@@ -167,6 +174,7 @@ export function sourcesQuery() {
                   "@timestamp",
                   "outcome.succeeded",
                   "outcome.records_published",
+                  "outcome.mcp_servers_published",
                   "outcome.error_code",
                   "outcome.started_at",
                   "outcome.finished_at",
@@ -180,7 +188,9 @@ export function sourcesQuery() {
   };
 }
 
-export function sightingsQuery(sourceId, externalId) {
+// kind is "agent" or "mcp_server": which of the two the external ID names.
+export function sightingsQuery(sourceId, externalId, kind = "agent") {
+  const server = kind === "mcp_server";
   return {
     size: 100,
     track_total_hits: true,
@@ -190,9 +200,9 @@ export function sightingsQuery(sourceId, externalId) {
     query: {
       bool: {
         filter: [
-          { term: { event_type: AGENT } },
+          { term: { event_type: server ? MCP_SERVER : AGENT } },
           { term: { "source.id": sourceId } },
-          { term: { "agent.external_id": externalId } },
+          { term: { [server ? "mcp_server.external_id" : "agent.external_id"]: externalId } },
         ],
       },
     },
@@ -227,6 +237,7 @@ export function shapeSources(buckets) {
         started_at: outcome.started_at ?? null,
         finished_at: outcome.finished_at ?? null,
         records_published: outcome.records_published ?? null,
+        mcp_servers_published: outcome.mcp_servers_published ?? null,
         records_failed: outcome.records_failed ?? 0,
         failed_records: outcome.failed_records ?? [],
         error: outcome.error ?? null,
@@ -240,6 +251,7 @@ export function shapeSources(buckets) {
         at: h._source["@timestamp"],
         succeeded: h._source.outcome?.succeeded ?? null,
         records_published: h._source.outcome?.records_published ?? null,
+        mcp_servers_published: h._source.outcome?.mcp_servers_published ?? null,
         error_code: h._source.outcome?.error_code ?? null,
         started_at: h._source.outcome?.started_at ?? null,
         finished_at: h._source.outcome?.finished_at ?? null,
@@ -258,12 +270,19 @@ export function shapeSources(buckets) {
 // so a source's first scan doesn't call everything it finds new.
 const NEW_DAYS = 7;
 
-export function shapeAgents(buckets, sources, now = Date.now()) {
+export const shapeAgents = (buckets, sources, now = Date.now()) => shapeFound(buckets, sources, now, "agent");
+
+// One entry per MCP server, with the same status and is_new an agent has. Its record is
+// under mcp_server: how the source knows it is there (detection), the tools seen on it,
+// and used_by, the external_id of each agent of the same source seen using it.
+export const shapeMcpServers = (buckets, sources, now = Date.now()) => shapeFound(buckets, sources, now, "mcp_server");
+
+function shapeFound(buckets, sources, now, field) {
   const lastOk = new Map(sources.map((s) => [s.key, time(s.last_success_at)]));
   const firstScan = new Map(sources.map((s) => [s.key, time(s.first_scan_at)]));
   return buckets.map((b) => {
     const hit = b.latest.hits.hits[0]?._source ?? {};
-    const agent = hit.agent ?? {};
+    const record = hit[field] ?? {};
     const src = hit.source ?? {};
     const last = b.last.value;
     const key = sourceKey(b.key.source_id, src.config_name);
@@ -278,29 +297,32 @@ export function shapeAgents(buckets, sources, now = Date.now()) {
     return {
       key: `${b.key.source_id}\u0000${b.key.external_id}`,
       external_id: b.key.external_id,
-      name: agent.name ?? b.key.external_id,
+      name: record.name ?? b.key.external_id,
       source: { id: b.key.source_id, name: src.name ?? null, vendor: src.vendor ?? null, config_name: src.config_name ?? null },
       first_seen: b.first.value_as_string ?? null,
       last_seen: b.last.value_as_string ?? null,
       sightings: b.doc_count,
       status,
       is_new: isNew,
-      agent,
+      [field]: record,
     };
   });
 }
 
 // Everything the page shows, in one answer.
 export async function overview(cfg, call = es) {
-  const [s, a] = await Promise.all([
+  const [s, a, m] = await Promise.all([
     compositeBuckets(cfg, sourcesQuery(), call),
     compositeBuckets(cfg, agentsQuery(), call),
+    compositeBuckets(cfg, mcpServersQuery(), call),
   ]);
   const sources = shapeSources(s.buckets);
   const agents = shapeAgents(a.buckets, sources);
-  // Sources that sent agents but never a scan outcome still belong in the list.
+  const mcpServers = shapeMcpServers(m.buckets, sources);
+  // Sources that sent agents or MCP servers but never a scan outcome still belong in the
+  // list.
   const known = new Set(sources.map((x) => x.key));
-  for (const ag of agents) {
+  for (const ag of [...agents, ...mcpServers]) {
     const key = sourceKey(ag.source.id, ag.source.config_name);
     if (known.has(key)) continue;
     known.add(key);
@@ -321,14 +343,15 @@ export async function overview(cfg, call = es) {
   return {
     generated_at: new Date().toISOString(),
     index: cfg.index,
-    truncated: s.truncated || a.truncated,
+    truncated: s.truncated || a.truncated || m.truncated,
     sources,
     agents,
+    mcp_servers: mcpServers,
   };
 }
 
-export async function sightings(cfg, sourceId, externalId, call = es) {
-  const res = await call(cfg, `/${encodeURIComponent(cfg.index)}/_search`, sightingsQuery(sourceId, externalId));
+export async function sightings(cfg, sourceId, externalId, kind = "agent", call = es) {
+  const res = await call(cfg, `/${encodeURIComponent(cfg.index)}/_search`, sightingsQuery(sourceId, externalId, kind));
   return {
     total: res.hits?.total?.value ?? 0,
     times: (res.hits?.hits ?? []).map((h) => h.fields?.["@timestamp"]?.[0]).filter(Boolean),

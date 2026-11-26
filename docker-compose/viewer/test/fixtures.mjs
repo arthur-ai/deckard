@@ -1,7 +1,8 @@
 // Elasticsearch's answers to the viewer's two overview queries, for a cluster holding:
 //   corp-macs / all-macs   a Jamf source whose last scan failed, with one unreadable Mac
 //   vertex-prod / engines  a Vertex source scanning fine, with a denied project
-// and agents that are current, gone, new, and from a source with no scan outcomes.
+// and agents that are current, gone, new, and from a source with no scan outcomes; and
+// MCP servers from a LiteLLM source that sends no scan outcomes and from the Vertex one.
 
 export const NOW = Date.parse("2026-11-13T12:00:00Z");
 const t = (iso) => ({ value: Date.parse(iso), value_as_string: iso });
@@ -65,6 +66,7 @@ export const sourceBuckets = [
               started_at: "2026-11-13T11:30:00.000Z",
               finished_at: "2026-11-13T11:30:04.000Z",
               records_published: 2,
+              mcp_servers_published: 2,
               denied_scopes: [{ scope: "projects/acme-dev-456", reason: "permission_denied" }],
               failed_records: [],
             },
@@ -73,7 +75,7 @@ export const sourceBuckets = [
       },
     },
     last_ok: { hit: { hits: { hits: [{ _source: { "@timestamp": "2026-11-13T11:30:00.000Z", outcome: { started_at: "2026-11-13T11:30:00.000Z" } } }] } } },
-    recent: { hits: { hits: [scan("2026-11-13T11:30:00.000Z", true)] } },
+    recent: { hits: { hits: [scan("2026-11-13T11:30:00.000Z", true, { mcp_servers_published: 2 })] } },
   },
 ];
 
@@ -114,14 +116,56 @@ export const agentBuckets = [
   agent("hook-1", "siem", "splunk_enterprise", "callers", "role/x", "x-caller", "2026-11-10T00:00:00.000Z", "2026-11-13T09:00:00.000Z"),
 ];
 
-// A stand-in for es(): answers the agents query or the sources query by what it filters on,
-// one page at a time, so paging is exercised too.
+const server = (sourceId, sourceName, vendor, config, id, name, first, last, extra = {}) => ({
+  key: { source_id: sourceId, external_id: id },
+  doc_count: 3,
+  first: t(first),
+  last: t(last),
+  latest: {
+    hits: {
+      hits: [{
+        _source: {
+          "@timestamp": last,
+          source: { id: sourceId, name: sourceName, vendor, config_name: config },
+          mcp_server: { external_id: id, name, last_seen: last, ...extra },
+        },
+      }],
+    },
+  },
+});
+
+export const mcpServerBuckets = [
+  // Called through a gateway whose source sends no scan outcomes, by one of its agents.
+  server("litellm-1", "llm-gateway", "litellm", "requests", "litellm:gw:mcp_server:github", "github", "2026-11-10T00:00:00.000Z", "2026-11-13T09:00:00.000Z", {
+    detection: "called",
+    tools: [{ name: "github-get_issue", arguments: [] }],
+    used_by: ["litellm:gw:virtual_key:9f3b"],
+  }),
+  // Registered, with nothing the source can say about its tools or who uses it; first
+  // reported after Vertex's first scan, two days ago: new.
+  server("vertex-1", "vertex-prod", "gcp_vertex", "engines", "projects/1/locations/global/mcpServers/bigquery", "bigquery", "2026-11-11T09:00:00.000Z", "2026-11-13T11:30:00.300Z", {
+    detection: "registered",
+  }),
+  // Last reported before Vertex's last successful scan: gone.
+  server("vertex-1", "vertex-prod", "gcp_vertex", "engines", "projects/1/locations/global/mcpServers/maps", "maps", "2026-11-01T00:00:00.200Z", "2026-11-12T11:30:00.300Z", {
+    detection: "registered",
+  }),
+];
+
+const BUCKETS = {
+  "arthur.discovery.agent": agentBuckets,
+  "arthur.discovery.mcp_server": mcpServerBuckets,
+  "arthur.discovery.scan_outcome": sourceBuckets,
+};
+
+// A stand-in for es(): answers the agents, MCP servers or sources query by what it filters
+// on, one page at a time, so paging is exercised too.
 export function fakeEs({ pageSize } = {}) {
   const calls = [];
   const call = async (_cfg, path, body) => {
     calls.push({ path, body });
     const type = body.query.bool.filter[0].term.event_type;
-    const all = type === "arthur.discovery.agent" ? agentBuckets : sourceBuckets;
+    const all = BUCKETS[type];
     const size = pageSize ?? body.aggs.c.composite.size;
     const after = body.aggs.c.composite.after;
     const start = after ? all.findIndex((b) => JSON.stringify(b.key) === JSON.stringify(after)) + 1 : 0;
