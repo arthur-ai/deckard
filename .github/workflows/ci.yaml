@@ -160,6 +160,17 @@ jobs:
           curl -fsS http://127.0.0.1:7493/api/overview \
             | jq -e '.agents[] | select(.name == "Claude Code" and .status == "current")' >/dev/null \
             || { echo "::error::the viewer does not show Claude Code as current"; exit 1; }
+          # Scan now: answered whether or not this Deckard has the control API, and refused
+          # to any page but the viewer's own.
+          curl -fsS http://127.0.0.1:7493/api/scans \
+            | jq -e '.available == false or any(.scans[]; .source_name == "this-machine")' >/dev/null \
+            || { echo "::error::the viewer's /api/scans is wrong"; exit 1; }
+          status="$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' \
+            -H 'Content-Type: application/json' -d '{"source_id":"x"}' http://127.0.0.1:7493/api/scans/run)"
+          [ "$status" = 403 ] || { echo "::error::a scan request from another site got $status, not 403"; exit 1; }
+          status="$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' \
+            -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:7493/api/sources/add)"
+          [ "$status" = 403 ] || { echo "::error::adding a source from another site got $status, not 403"; exit 1; }
       - name: Logs
         if: always()
         working-directory: docker-compose
@@ -420,7 +431,24 @@ jobs:
             'install', '--quiet', '--accept-license', '--backend=wsl-2', '--always-run-service', '--no-windows-containers'
           if ($install.ExitCode -ne 0) { throw "the Docker Desktop installer exited $($install.ExitCode)" }
           Add-Content -Path $env:GITHUB_PATH -Value "$env:ProgramFiles\Docker\Docker\resources\bin"
+      # Its own step, so its log is uploaded before Docker Desktop starts: twice the start
+      # has hung until the job's time ran out, and the job's log was lost both times.
+      - name: Describe the runner, for a start that hangs
+        run: |
+          $ErrorActionPreference = 'Continue'
+          "Image: $env:ImageOS $env:ImageVersion"
+          wsl --version
+          wsl --status
+          wsl --list --verbose
+          # Windows PowerShell's Get-WindowsOptionalFeature takes one name at a time.
+          foreach ($feature in 'Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') {
+            "${feature}: $((Get-WindowsOptionalFeature -Online -FeatureName $feature).State)"
+          }
+          # Only describes: wsl exits non-zero with no distributions, as before Docker starts.
+          exit 0
       - name: Start Docker Desktop
+        # Well under the job's 30, so a start that hangs fails here, with its log kept.
+        timeout-minutes: 10
         run: |
           # Windows PowerShell turns a native command's redirected stderr into errors, which
           # the default 'Stop' would throw on while the engine starts.
@@ -435,6 +463,15 @@ jobs:
           if ((docker info --format '{{.OSType}}' 2>$null) -ne 'linux') {
             throw 'Docker Desktop did not start its Linux engine'
           }
+      - name: Docker Desktop's own logs, if it didn't start
+        if: failure()
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Continue'
+          wsl --list --verbose
+          Get-ChildItem "$env:LOCALAPPDATA\Docker\log" -Recurse -Filter *.log -ErrorAction SilentlyContinue |
+            ForEach-Object { "==== $($_.FullName)"; Get-Content $_.FullName -Tail 60 }
+          exit 0
       - name: Install osquery
         run: |
           $msi = Join-Path $env:RUNNER_TEMP 'osquery.msi'

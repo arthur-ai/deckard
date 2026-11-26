@@ -63,14 +63,16 @@ AI agents on this machine
 
 See them      http://localhost:7493
 Rescan        ./start.sh
-Add sources   cloud, MDM or SIEM: see docker-compose/README.md
+Add sources   cloud, MDM or SIEM: the viewer's Sources tab
 ```
 
 Open [localhost:7493](http://localhost:7493) to see every AI agent Deckard has found, where
 it is, when it was first and last seen, and whether the latest scan still reports it. The
 viewer also shows how each source's scans are going, and puts what needs attention at the top:
 new agents, failing scans, and cloud scopes or machines Deckard couldn't read. Click an agent
-for everything its source reported. Run `./start.sh` again to rescan.
+for everything its source reported. Run `./start.sh` again to rescan this machine; each cloud,
+MDM and SIEM source has a **Scan now** button on the Sources tab, and **Add source** there
+adds one, with a connection test first.
 
 Next, add your cloud, MDM or SIEM sources to
 [`docker-compose/discovery.yaml`](docker-compose/discovery.yaml) (it has commented

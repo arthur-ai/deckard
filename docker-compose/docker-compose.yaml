@@ -23,15 +23,21 @@ services:
     environment:
       ML_ENGINE_DISCOVERY_CONFIG: /etc/deckard/discovery.yaml
       ELASTIC_PASSWORD: *elastic-password
+      # The API the viewer's Scan now buttons call, on port 7494 inside this network only,
+      # for whoever holds the token control-token wrote.
+      ML_ENGINE_CONTROL_TOKEN_FILE: /etc/deckard/control/token
     volumes:
       - ./discovery.yaml:/etc/deckard/discovery.yaml:ro
       # Files the config reads with {file: secrets/...}, resolved beside the config.
       - ./secrets:/etc/deckard/secrets:ro
       # This machine's scan, written by ./scan-local.sh (scan-local.ps1 on Windows), for the `local` source.
       - ./local-scan:/etc/deckard/local-scan:ro
+      - control:/etc/deckard/control:ro
     depends_on:
       # So the scan at startup has a user to send as.
       elastic-setup:
+        condition: service_completed_successfully
+      control-token:
         condition: service_completed_successfully
     healthcheck:
       test: wget -qO - http://127.0.0.1:7492/health
@@ -74,9 +80,14 @@ services:
   # a user that can only read them. Listens on this machine only, with no login.
   viewer:
     image: node:24.22.1-alpine
-    user: node
+    # You, so it can edit discovery.yaml and secrets/, in Deckard's group, so Deckard can
+    # read the secret files it writes there without anyone else being able to.
+    user: "${VIEWER_UID:-1000}:65532"
     restart: unless-stopped
     read_only: true
+    # Scratch space for its tests, which CI runs in this container.
+    tmpfs:
+      - /tmp
     working_dir: /viewer
     command: ["node", "server.mjs"]
     environment:
@@ -86,12 +97,25 @@ services:
       ES_API_KEY: ${VIEWER_ES_API_KEY:-}
       ES_USERNAME: deckard_viewer
       ES_PASSWORD: *elastic-password
+      # Where Scan now asks Deckard to scan a source.
+      DECKARD_URL: http://deckard:7494
+      DECKARD_CONTROL_TOKEN_FILE: /control/token
+      # Where Add source writes: the discovery.yaml and secrets/ Deckard reads, which it
+      # watches and applies within seconds.
+      SOURCES_CONFIG: /deckard/discovery.yaml
+      SOURCES_SECRETS: /deckard/secrets
     volumes:
       - ./viewer:/viewer:ro
+      - control:/control:ro
+      # Writable: the viewer edits these.
+      - ./discovery.yaml:/deckard/discovery.yaml
+      - ./secrets:/deckard/secrets
     ports:
       - 127.0.0.1:7493:7493
     depends_on:
       elastic-setup:
+        condition: service_completed_successfully
+      control-token:
         condition: service_completed_successfully
     healthcheck:
       # Up once Elasticsearch answers the viewer's user.
@@ -112,5 +136,18 @@ services:
       elasticsearch:
         condition: service_healthy
 
+  # One-shot: the token the viewer shows Deckard to ask for a scan, made once and kept in
+  # the control volume, which only Deckard and the viewer mount.
+  control-token:
+    image: node:24.22.1-alpine
+    read_only: true
+    command:
+      - sh
+      - -c
+      - '[ -s /control/token ] || { umask 022; od -An -N32 -tx1 /dev/urandom | tr -d " \n" > /control/token; }'
+    volumes:
+      - control:/control
+
 volumes:
   elasticsearch-data:
+  control:

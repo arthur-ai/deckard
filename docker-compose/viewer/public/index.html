@@ -68,6 +68,11 @@
     </section>
 
     <section id="panel-sources" role="tabpanel" aria-labelledby="tab-sources" hidden>
+      <div class="sources-bar">
+        <p id="scans-note" class="small muted scans-note" hidden></p>
+        <button id="add-source" type="button" class="primary" hidden>Add source</button>
+      </div>
+      <div id="sources-status"></div>
       <div id="sources-list" class="sources"></div>
       <p id="sources-empty" class="empty" hidden></p>
     </section>
@@ -83,6 +88,17 @@
     </div>
     <div id="drawer-body" class="drawer-body"></div>
   </aside>
+  <aside id="editor" class="drawer" hidden aria-labelledby="editor-title">
+    <div class="drawer-head">
+      <div>
+        <h2 id="editor-title"></h2>
+        <p id="editor-sub" class="small muted"></p>
+      </div>
+      <button id="editor-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <form id="editor-form" class="drawer-body editor" novalidate></form>
+  </aside>
   <div id="scrim" class="scrim" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

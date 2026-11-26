@@ -91,7 +91,7 @@ Use a command timeout of at least 15 minutes: the first run downloads about 1.4 
 cd <DECKARD_DIR>/docker-compose && docker compose up -d --wait --remove-orphans; docker compose ps -a --format 'table {{.Service}}\t{{.Status}}'
 ```
 
-**Success:** `deckard`, `elasticsearch` and `viewer` are `(healthy)`, and `elastic-setup` is
+**Success:** `deckard`, `elasticsearch` and `viewer` are `(healthy)`, and `elastic-setup` and `control-token` are
 `Exited (0)`. Deckard scans once at startup, so its first events land
 within about a minute.
 
