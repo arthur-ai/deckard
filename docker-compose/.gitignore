@@ -5,3 +5,6 @@ secrets/*
 !secrets/.gitkeep
 local-scan/*
 !local-scan/.gitkeep
+# What ../start.sh and the viewer pass each other: see viewer/localscan.mjs.
+runner/*
+!runner/.gitkeep

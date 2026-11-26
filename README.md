@@ -40,8 +40,11 @@ git clone https://github.com/arthur-ai/deckard.git
 cd deckard && ./start.sh
 ```
 
-`start.sh` checks your machine, scans it, starts Deckard with an Elasticsearch and a viewer
-beside it, waits for the scan to arrive, and prints the agents it found. It installs nothing
+`start.sh` checks your machine, then scans it while it starts an Elasticsearch and a viewer,
+and opens the viewer's welcome page in your browser, where you can add your cloud, MDM and SIEM
+sources while the scan runs. Then it starts Deckard, waits for the scan to arrive, and prints
+the agents it found. It stays running so the viewer can scan this machine again; Ctrl-C stops
+that, and leaves Deckard running. It installs nothing
 and never runs `sudo`: if something is missing, it stops and prints the command to run
 yourself. The scan lists what's installed on this machine using the osquery queries from
 [ai-detection-spec](https://github.com/arthur-ai/ai-detection-spec), our open format and
@@ -51,8 +54,10 @@ catalog for finding AI agents on a machine. It changes nothing and doesn't need 
 Deckard · scanning my-laptop
 
 ✓ Machine ready      Docker 29.9.2 · 63 GB RAM · osquery 5.24.0
+✓ Viewer running     Elasticsearch + viewer · 8s
+✓ Viewer opened      http://localhost:7493 · add your cloud, MDM and SIEM sources there
 ✓ Scanned            6s
-✓ Deckard running    Elasticsearch + viewer · 8s
+✓ Deckard running    5s
 ✓ Scan published     4 AI agents found
 
 AI agents on this machine
@@ -62,16 +67,18 @@ AI agents on this machine
   Pi            Coding agent    ~/.pi/
 
 See them      http://localhost:7493
-Rescan        ./start.sh
-Add sources   cloud, MDM or SIEM: the viewer's Sources tab
+Rescan        Scan now in the viewer, while this runs
+Add sources   cloud, MDM or SIEM: the viewer's welcome page or Sources tab
+
+Leave this running to scan this machine from the viewer. Ctrl-C stops that; Deckard keeps running.
 ```
 
 Open [localhost:7493](http://localhost:7493) to see every AI agent Deckard has found, where
 it is, when it was first and last seen, and whether the latest scan still reports it. The
 viewer also shows how each source's scans are going, and puts what needs attention at the top:
 new agents, failing scans, and cloud scopes or machines Deckard couldn't read. Click an agent
-for everything its source reported. Run `./start.sh` again to rescan this machine; each cloud,
-MDM and SIEM source has a **Scan now** button on the Sources tab, and **Add source** there
+for everything its source reported. While `./start.sh` runs, **Scan now** on this machine's source rescans it (or run
+`./start.sh` again); each cloud, MDM and SIEM source has a **Scan now** button on the Sources tab, and **Add source** there
 adds one, with a connection test first.
 
 Next, add your cloud, MDM or SIEM sources to

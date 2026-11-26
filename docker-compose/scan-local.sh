@@ -118,6 +118,9 @@ chmod 755 "$out"
 chmod 644 "$out/inventory.json" "$out/machine.json"
 
 echo "Done: $(cut -d' ' -f1,3 "$out/status.txt" 2>/dev/null) -> $out"
+# ../start.sh, which runs this for the viewer, starts Deckard and publishes the scan itself,
+# and shows the last line of this output on the viewer's page: only the line above.
+[ -z "${DECKARD_START:-}" ] || exit 0
 echo "Deckard reads it on its next scan. To start Deckard and see what it finds:"
 echo "  docker compose up -d --wait"
 echo "  then open http://localhost:7493"

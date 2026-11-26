@@ -448,3 +448,39 @@ pre.plain { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; font
 .ok-box .sub-table { width: 100%; table-layout: fixed; }
 .ok-box .sub-table td { word-break: break-all; vertical-align: top; }
 .ok-box .sub-table th:nth-child(2), .ok-box .sub-table td:nth-child(2) { width: 70px; }
+
+/* Welcome: this machine's scan, then the other sources */
+.welcome { max-width: 860px; margin: 8px auto 0; }
+.welcome-head { margin-bottom: 18px; }
+.welcome-head h2 { font-size: 22px; margin-bottom: 6px; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: step; }
+.step {
+  counter-increment: step;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.step-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.step-head h3::before { content: counter(step) ". "; color: var(--muted); }
+.step-head .actions { display: flex; align-items: center; gap: 10px; }
+.step > p { margin-top: 6px; }
+.step-status { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-weight: 550; }
+.step-status.ok { color: var(--ok); }
+.step-status.bad { color: var(--bad); }
+.step-status .spinner { color: var(--accent); }
+.found { margin: 10px 0 0; padding: 0; list-style: none; }
+.found li { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--border); }
+.found li:first-child { border-top: 0; }
+.found .name { font-weight: 600; }
+.found .mono { color: var(--muted); word-break: break-all; }
+.kinds { display: grid; gap: 12px; margin-top: 12px; }
+.kinds h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.kind-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.kind-list button { font-size: 13px; }
+.added { margin: 14px 0 0; padding: 0; list-style: none; }
+.added li { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); }
+.added .meta { color: var(--muted); font-size: 12.5px; }
+.welcome-foot { display: flex; align-items: center; gap: 16px; margin-top: 18px; flex-wrap: wrap; }
+.welcome-foot p { flex: 1 1 320px; }

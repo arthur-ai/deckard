@@ -40,6 +40,9 @@ export function config(env = process.env) {
     // editing sources. Off without the config file.
     sourcesConfig: env.SOURCES_CONFIG || null,
     sourcesSecrets: env.SOURCES_SECRETS || null,
+    // The folder ./start.sh and the viewer share, for scanning this machine from the page.
+    // Off without it; see localscan.mjs.
+    localScanRunner: env.LOCAL_SCAN_RUNNER || null,
     allowedHosts: (env.ALLOWED_HOSTS || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean),
   };
 }

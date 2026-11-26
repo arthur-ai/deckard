@@ -8,12 +8,19 @@ const NEW_SHOWN = 5;
 // How often to look again while a scan is running or waiting to.
 const SCAN_POLL_MS = 4_000;
 // Sources whose scan reads a file another tool writes: scanning again reads the same file.
-const RESCAN_ELSEWHERE = { local: "./scan-local.sh && docker compose restart deckard" };
+// This machine's is written by ./start.sh, which scans it again from the page while it runs.
+const RESCAN_ELSEWHERE = { local: "./start.sh" };
+// How often to ask where this machine's scan stands: while it runs or Deckard reads it, and
+// otherwise, to notice ./start.sh starting or stopping.
+const LOCAL_POLL_MS = 2_000;
+const LOCAL_IDLE_MS = 10_000;
+// How long after this machine's scan to wait for Deckard's outcome of it before saying so.
+const PUBLISH_WAIT_MS = 3 * 60_000;
 const ACTIVE = new Set(["running", "waiting", "stopping"]);
 
 const state = {
   data: null,
-  tab: location.hash === "#sources" ? "sources" : "agents",
+  tab: ({ "#sources": "sources", "#welcome": "welcome" })[location.hash] ?? "agents",
   status: "current",
   kind: "",
   source: "",
@@ -31,6 +38,9 @@ const state = {
   srcs: null,
   // The source being added or edited, or null.
   editor: null,
+  // This machine's scan, which ./start.sh runs: /api/local-scan's answer, plus asking
+  // while the page's request is out and error when it failed.
+  local: { available: false, alive: false, status: null, requested: null, handoff: null, asking: false, error: null },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -307,8 +317,8 @@ function renderAgents() {
 // The Scan now button for source s, or what stands in for it.
 function scanControl(s, scan) {
   if (!scan) return null;
-  const elsewhere = RESCAN_ELSEWHERE[scan.vendor];
-  if (elsewhere) return null;
+  if (scan.vendor === "local") return localScanControl();
+  if (RESCAN_ELSEWHERE[scan.vendor]) return null;
   const asking = state.asking.get(s.key);
   const label = asking ? "Queued"
     : scan.status === "running" ? "Scanning…"
@@ -415,21 +425,14 @@ function renderSources() {
   fill($("sources-list"), ...list.map((s) => {
     const ls = s.last_scan;
     const scan = scanOf(s);
-    const scanError = state.scanErrors.get(s.key);
+    const scanError = state.scanErrors.get(s.key) ?? (s.vendor === "local" ? localError() : null);
     const agentsHere = state.data.agents.filter((a) => a.source.id === s.id && a.source.config_name === s.config_name && isCurrent(a)).length;
-    let pill;
-    if (s.pending) pill = h("span", { class: "badge", title: "Saved in discovery.yaml; Deckard starts scanning it within a few seconds" }, "Starting…");
-    else if (s.unseen) pill = h("span", { class: "badge" }, ACTIVE.has(scan?.status) ? "First scan" : "Not scanned yet");
-    else if (!ls) pill = h("span", { class: "badge", title: "This source sends no scan outcomes: set emit_scan_outcomes: true" }, "No scan outcomes");
-    else if (ls.succeeded) pill = h("span", { class: "badge ok" }, "Scanning fine");
-    else pill = h("span", { class: "badge bad" }, "Last scan failed");
-
     const dl = (pairs) => h("dl", { class: "facts" }, pairs.filter(Boolean).map(([k, v]) => h("div", {}, h("dt", {}, k), h("dd", {}, v))));
     const cov = ls?.device_coverage;
     return h("article", { class: "source" },
       h("div", { class: "source-head" },
         h("div", {}, h("h3", {}, s.name), h("div", { class: "meta" }, [s.vendor, s.config_name && `config ${s.config_name}`].filter(Boolean).join(" · "))),
-        h("div", { class: "source-actions" }, pill, scanControl(s, scan), editControl(s))),
+        h("div", { class: "source-actions" }, sourcePill(s, ls, scan), scanControl(s, scan), editControl(s))),
       dl([
         ["Last scan", ls ? when(ls.at) : "—"],
         ls && ["Took", duration(ls.started_at, ls.finished_at)],
@@ -438,7 +441,7 @@ function renderSources() {
         ["Scans", s.failed_scans ? `${s.scans.toLocaleString()} (${s.failed_scans.toLocaleString()} failed)` : s.scans.toLocaleString()],
         s.last_success_at && ls && !ls.succeeded && ["Last success", when(s.last_success_at)],
         scan && scan.status === "scheduled" && scan.next_due_at && ["Next scan", h("span", { title: exact(scan.next_due_at) }, until(scan.next_due_at))],
-        scan && RESCAN_ELSEWHERE[scan.vendor] && ["Rescan", h("code", { title: "In docker-compose/: scanning again from here would read the same file" }, RESCAN_ELSEWHERE[scan.vendor])],
+        scan && RESCAN_ELSEWHERE[scan.vendor] && !(scan.vendor === "local" && state.local.alive) && ["Rescan", h("code", { title: "In docker-compose/: scanning again from here would read the same file" }, RESCAN_ELSEWHERE[scan.vendor])],
         cov && ["Machines read", `${(cov.devices_read ?? 0).toLocaleString()} of ${(cov.devices_in_scope ?? cov.devices_read ?? 0).toLocaleString()}`],
       ]),
       scanError ? h("div", { class: "error-box" }, scanError) : null,
@@ -472,6 +475,15 @@ function renderSources() {
         : null,
     );
   }));
+  renderWelcome();
+}
+
+function sourcePill(s, ls, scan) {
+  if (s.pending) return h("span", { class: "badge", title: "Saved in discovery.yaml; Deckard starts scanning it within a few seconds" }, "Starting…");
+  if (s.unseen) return h("span", { class: "badge" }, ACTIVE.has(scan?.status) ? "First scan" : "Not scanned yet");
+  if (!ls) return h("span", { class: "badge", title: "This source sends no scan outcomes: set emit_scan_outcomes: true" }, "No scan outcomes");
+  if (ls.succeeded) return h("span", { class: "badge ok" }, "Scanning fine");
+  return h("span", { class: "badge bad" }, "Last scan failed");
 }
 
 function tickBars(recent) {
@@ -604,10 +616,11 @@ async function loadSources() {
   try {
     const res = await fetch("/api/sources");
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `the viewer answered ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(body.error || `the viewer answered ${res.status}`), { status: res.status });
     state.srcs = { hash: body.hash, sources: body.sources, types: body.source_types, deckard: body.deckard };
   } catch (err) {
-    state.srcs = { error: err.message };
+    // 501: a Deckard release whose control API has no source routes, which waiting won't fix.
+    state.srcs = { error: err.message, unsupported: err.status === 501 };
   }
   // Which sources are configured decides what the stats and Needs attention count, and
   // which agents are no longer reported, too.
@@ -637,13 +650,14 @@ function editControl(s) {
   return h("button", { type: "button", onclick: () => openEditor(s.name) }, "Edit");
 }
 
-function openEditor(name) {
+// name: the source to edit, or null to add one, of kind vendor if given.
+function openEditor(name, vendor = "") {
   const existing = name ? yamlSource(name) : null;
   const config = existing?.configs?.[0];
   state.editor = {
     name: existing?.name ?? "",
     editing: existing ? existing.name : null,
-    vendor: existing?.vendor ?? "",
+    vendor: existing?.vendor ?? vendor,
     // Each field as the form shows it. A secret, and a value read from a file, start
     // blank: blank keeps what discovery.yaml has.
     values: Object.fromEntries((existing?.fields ?? []).filter((f) => !f.secret && f.ref !== "file").map((f) => [f.key, f.value])),
@@ -651,7 +665,7 @@ function openEditor(name) {
       name: config?.name ?? "default",
       query: config?.query ?? "",
       query_file: config?.query_file,
-      query_language: config?.query_language,
+      query_language: config?.query_language ?? (vendor ? typeOf(vendor)?.query_language : undefined),
       lookback_window_seconds: config?.lookback_window_seconds ?? 86400,
     },
     otherConfigs: (existing?.configs ?? []).slice(1),
@@ -877,14 +891,212 @@ function showToast(text) {
   showToast.timer = setTimeout(() => { t.hidden = true; }, 6000);
 }
 
+/* This machine's scan, which ./start.sh runs on the host */
+
+const localSources = () => (state.data ? configuredSources().filter((s) => s.vendor === "local") : []);
+const localAgents = () => (state.data?.agents ?? []).filter((a) => a.source.vendor === "local" && isCurrent(a));
+
+// Where this machine's scan stands, for the page: one of
+//   none        no run to show: ./start.sh has never scanned with this viewer
+//   scanning    start.sh is scanning, or asked to
+//   stopped     start.sh stopped in the middle of a scan
+//   failed      start.sh's scan failed: run.message says why
+//   publishing  scanned, and Deckard hasn't sent its outcome of that scan yet
+//   late        as publishing, for longer than PUBLISH_WAIT_MS, or Deckard couldn't be asked
+//   done        Deckard sent its outcome: last.succeeded says how that went
+function localPhase() {
+  const { status: run, requested, alive, handoff } = state.local;
+  const last = localSources().map((s) => s.last_scan).filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] ?? null;
+  if (state.local.asking) return { phase: "scanning", run, last };
+  if (requested) return { phase: alive ? "scanning" : "stopped", run, last };
+  if (!run) return { phase: "none", run, last };
+  if (run.state === "running") return { phase: alive ? "scanning" : "stopped", run, last };
+  if (run.state === "failed") return { phase: "failed", run, last };
+  const finished = Date.parse(run.finished_at);
+  if (last && !(Date.parse(last.at) < finished)) return { phase: "done", run, last };
+  if (handoff?.run === run.run && handoff.error) return { phase: "late", run, last, why: handoff.error };
+  if (Date.now() - finished > PUBLISH_WAIT_MS) return { phase: "late", run, last };
+  return { phase: "publishing", run, last };
+}
+
+// What went wrong with this machine's last scan from start.sh, for its source on the Sources tab.
+function localError() {
+  if (state.local.error) return state.local.error;
+  const { phase, run } = localPhase();
+  if (phase === "failed") return `./start.sh's last scan of this machine failed${run.message ? `: ${run.message.trim().split("\n").at(-1)}` : ""}`;
+  if (phase === "stopped") return "./start.sh stopped before its scan of this machine finished.";
+  return null;
+}
+
+function localScanControl() {
+  const l = state.local;
+  if (!l.available || !l.alive) return null;
+  const { phase } = localPhase();
+  const busy = phase === "scanning" || phase === "publishing";
+  return h("button", {
+    type: "button",
+    class: `scan-now${busy ? " busy" : ""}`,
+    disabled: busy,
+    title: busy ? null : "Scan this machine again, as ./start.sh did",
+    onclick: askLocalScan,
+  }, busy ? h("span", { class: "spinner", "aria-hidden": "true" }) : null, phase === "scanning" ? "Scanning…" : phase === "publishing" ? "Reading…" : "Scan now");
+}
+
+async function askLocalScan() {
+  state.local.asking = true;
+  state.local.error = null;
+  renderSources();
+  try {
+    const res = await fetch("/api/local-scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the viewer answered ${res.status}`);
+    Object.assign(state.local, pickLocal(body));
+  } catch (err) {
+    state.local.error = `Unable to scan this machine: ${err.message}`;
+  } finally {
+    state.local.asking = false;
+    renderSources();
+    loadLocal();
+  }
+}
+
+const pickLocal = (b) => ({ available: !!b.available, alive: !!b.alive, status: b.status ?? null, requested: b.requested ?? null, handoff: b.handoff ?? null });
+
+let localTimer = null;
+
+async function loadLocal() {
+  clearTimeout(localTimer);
+  const before = localPhase().phase;
+  try {
+    const res = await fetch("/api/local-scan");
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) Object.assign(state.local, pickLocal(body));
+  } catch {
+    // The viewer restarting: as it was, and ask again.
+  }
+  const { phase } = localPhase();
+  // Scanned, and waiting for Deckard to read it: Deckard may still be starting, and its
+  // scan of one file can end between two looks at its scans, so look at its outcomes.
+  if (phase === "publishing" || (before === "scanning" && phase !== "scanning")) load();
+  renderSources();
+  renderWelcome();
+  if (!state.local.available) return;
+  localTimer = setTimeout(loadLocal, phase === "scanning" || phase === "publishing" ? LOCAL_POLL_MS : LOCAL_IDLE_MS);
+}
+
+/* Welcome */
+
+function renderWelcome() {
+  if (state.tab !== "welcome") return;
+  renderWelcomeLocal();
+  renderWelcomeSources();
+}
+
+function renderWelcomeLocal() {
+  const l = state.local;
+  const { phase, run, last, why } = localPhase();
+  const host = run?.host ? ` (${run.host})` : "";
+  const status = (cls, spin, ...text) => h("div", { class: `step-status ${cls}` }, spin ? h("span", { class: "spinner", "aria-hidden": "true" }) : null, ...text);
+  const agents = localAgents().sort((a, b) => a.name.localeCompare(b.name));
+  let line;
+  let detail = null;
+  switch (phase) {
+    case "scanning":
+      line = status("", true, `Scanning this machine${host} for AI agents. It takes about 10 seconds.`);
+      break;
+    case "publishing":
+      line = status("", true, "Scanned. Deckard is reading the scan…");
+      break;
+    case "late":
+      line = status("bad", false, "Scanned, but Deckard hasn't sent what it found yet.");
+      detail = h("p", { class: "small muted" }, why ? `${why}. ` : "", "In docker-compose/, ", h("code", {}, "docker compose logs --tail 50 deckard"), " says why.");
+      break;
+    case "stopped":
+      line = status("bad", false, "./start.sh stopped before the scan finished.");
+      detail = h("p", { class: "small muted" }, "Run ", h("code", {}, "./start.sh"), " again to scan this machine.");
+      break;
+    case "failed":
+      line = status("bad", false, "This machine's scan failed.");
+      detail = run.message ? h("pre", { class: "plain error-box" }, run.message) : null;
+      break;
+    case "done":
+    case "none":
+      if (last && last.succeeded === false) {
+        line = status("bad", false, "Deckard couldn't read this machine's scan.");
+        detail = h("div", { class: "error-box" }, h("strong", {}, last.error_code ?? "error"), last.error ? `: ${last.error}` : "");
+      } else if (last) {
+        line = status("ok", false, agents.length
+          ? `${plural(agents.length, "AI agent")} on this machine${host}.`
+          : `No AI agents from the catalog on this machine${host}.`);
+      } else {
+        line = status("", true, "Waiting for Deckard's first scan of this machine…");
+      }
+      break;
+  }
+  const shown = phase === "done" || phase === "none" || phase === "late" ? agents : [];
+  fill($("welcome-local"),
+    h("div", { class: "step-head" },
+      h("h3", {}, "Scan this machine"),
+      h("div", { class: "actions" }, localScanControl())),
+    h("p", { class: "muted" }, "Deckard lists what's installed here with osquery, using the open ",
+      h("a", { href: "https://github.com/arthur-ai/ai-detection-spec", target: "_blank", rel: "noopener" }, "AI detection catalog"),
+      ". It reads only, and changes nothing."),
+    line,
+    detail,
+    l.error ? h("div", { class: "error-box" }, l.error) : null,
+    shown.length ? h("ul", { class: "found" }, shown.slice(0, 12).map((a) => {
+      const f = facts(a);
+      return h("li", {}, h("span", { class: "name" }, a.name), f.kind ? h("span", { class: "badge accent" }, f.kind) : null, h("span", { class: "mono" }, f.where));
+    })) : null,
+    shown.length > 12 ? h("p", { class: "small muted" }, `and ${shown.length - 12} more on the dashboard`) : null,
+    l.available && !l.alive && phase !== "stopped" ? h("p", { class: "small muted" }, "To scan this machine again, run ", h("code", {}, "./start.sh"), ".") : null,
+  );
+}
+
+function renderWelcomeSources() {
+  const srcs = state.srcs;
+  const kinds = (srcs?.types ?? []).filter((t) => !NOT_ADDED_HERE.has(t.vendor));
+  const groups = Object.entries(CLASS_LABEL).map(([cls, text]) => [text, kinds.filter((t) => t.source_class === cls)]).filter(([, ts]) => ts.length);
+  const added = state.data ? sourceList().filter((s) => s.vendor !== "local") : [];
+  let body;
+  if (!srcs) body = h("div", { class: "step-status" }, h("span", { class: "spinner", "aria-hidden": "true" }), "Loading…");
+  else if (srcs.unsupported) {
+    body = h("p", { class: "small muted" }, `${srcs.error}. Add sources to discovery.yaml by hand, or set DECKARD_VERSION in .env to a release that can and run ./start.sh again.`);
+  } else if (srcs.error) {
+    // Usually Deckard still starting, which ./start.sh does after the viewer; the reason
+    // says when it's something else, as with a Deckard release without the control API.
+    body = [
+      h("div", { class: "step-status" }, h("span", { class: "spinner", "aria-hidden": "true" }), "Waiting for Deckard to start. You can add sources once it has."),
+      h("p", { class: "small muted" }, `${srcs.error}.`),
+    ];
+  } else {
+    body = h("div", { class: "kinds" }, groups.map(([text, ts]) => h("div", {},
+      h("h4", {}, text),
+      h("div", { class: "kind-list" }, ts.map((t) => h("button", { type: "button", onclick: () => openEditor(null, t.vendor) },
+        t.display_name, t.availability === "preview" ? h("span", { class: "muted" }, " (preview)") : null))))));
+  }
+  fill($("welcome-sources"),
+    h("div", { class: "step-head" }, h("h3", {}, "Add your other sources")),
+    h("p", { class: "muted" }, "Each source is tested before it's saved, and Deckard starts scanning it at once. Credentials stay on this machine, in ",
+      h("code", {}, "docker-compose/secrets/"), "."),
+    body,
+    added.length ? h("ul", { class: "added" }, added.map((s) => h("li", {},
+      h("div", {}, h("strong", {}, s.name), h("div", { class: "meta" }, [s.vendor, s.config_name && `config ${s.config_name}`].filter(Boolean).join(" · "))),
+      sourcePill(s, s.last_scan, scanOf(s))))) : null,
+  );
+}
+
 /* Loading */
 
 function setTab(tab) {
   state.tab = tab;
-  history.replaceState(null, "", tab === "sources" ? "#sources" : "#agents");
+  history.replaceState(null, "", `#${tab}`);
   for (const b of document.querySelectorAll("[data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+  $("panel-welcome").hidden = tab !== "welcome";
+  $("dashboard").hidden = tab === "welcome";
   $("panel-agents").hidden = tab !== "agents";
   $("panel-sources").hidden = tab !== "sources";
+  renderWelcome();
 }
 
 function render() {
@@ -913,7 +1125,8 @@ async function load() {
     state.data = body;
     updatedAt = Date.now();
     if (!scanTimer) loadScans();
-    if (!state.srcs) loadSources();
+    // Again while it failed: Deckard starts after the viewer, so the first ask can miss it.
+    if (!state.srcs || state.srcs.error) loadSources();
     banner.hidden = true;
     if (body.truncated) {
       banner.hidden = false;
@@ -989,6 +1202,7 @@ function wire() {
   $("drawer-close").addEventListener("click", closeAgent);
   $("editor-close").addEventListener("click", closeEditor);
   $("add-source").addEventListener("click", () => openEditor(null));
+  $("welcome-done").addEventListener("click", () => setTab("agents"));
   $("editor-form").addEventListener("submit", (e) => { e.preventDefault(); saveEditor(); });
   $("scrim").addEventListener("click", () => { closeAgent(); closeEditor(); });
   document.addEventListener("keydown", (e) => {
@@ -998,6 +1212,7 @@ function wire() {
   });
   setInterval(showUpdated, 15_000);
   load();
+  loadLocal();
 }
 
 wire();
