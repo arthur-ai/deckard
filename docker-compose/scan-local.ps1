@@ -30,7 +30,7 @@ $ProgressPreference = 'SilentlyContinue'
 # The collector, pinned to the commit of the engine release Deckard runs, so it writes the
 # scan that release reads, and checked against this hash. scripts/bump.sh moves both, with
 # scan-local.sh's pins.
-$CollectorRef = 'cbb4fc002b2d7fdae11a2d4d1003c17d7ec55b15'
+$CollectorRef = '16dff337f72901fde00496bb23fc6fc80760c082'
 $CollectWindowsPs1Sha256 = '4b8c084de503961e8afb7e81284df71e1ee9e0ec5e558acef8efaac215ff2bd5'
 $CollectorUrl = "https://raw.githubusercontent.com/arthur-ai/arthur-engine/$CollectorRef/integrations/endpoint-ai-discovery/dist/collect-windows.ps1"
 
